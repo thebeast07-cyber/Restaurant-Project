@@ -1,14 +1,16 @@
-# Proposal Pengembangan Aplikasi
+# Proposal Penyelarasan Visi dan Ruang Lingkup Aplikasi
 
-## Tujuan Proposal
-Dokumen ini disusun sebagai pengajuan tingkat manajemen untuk rancangan awal pengembangan **Aplikasi Manajemen Bisnis**. Tujuan utama dari proposal ini adalah untuk memberikan gambaran menyeluruh mengenai ruang lingkup operasional, kapabilitas fungsional, serta potensi manfaat bisnis yang dapat dihadirkan oleh aplikasi ini, sehingga manajemen dapat memberikan ulasan, umpan balik, dan persetujuan arah pengembangan.
+## Tujuan Dokumen
+Dokumen ini disusun sebagai bahan penyamaan visi, misi, ekspektasi, dan pemahaman antara manajemen dan tim pengembang dalam merancang Aplikasi Manajemen Bisnis Terintegrasi. Dokumen ini bukan ditujukan untuk "menjual" ide atau meminta persetujuan apakah aplikasi ini perlu dibangun, melainkan sebagai titik acuan bersama (*alignment document*) mengenai **apa yang sebenarnya perlu dibangun**.
 
 ## Target Pembaca
-Proposal ini ditujukan khusus bagi **Manajemen non-teknis, Pemilik Bisnis, dan Pengambil Keputusan (Stakeholders)**. Oleh karena itu, dokumen ini ditulis menggunakan bahasa bisnis sehari-hari dan menghindari penggunaan istilah teknis pengembangan perangkat lunak secara mendalam. Untuk spesifikasi teknis dan desain arsitektur, dokumen terpisah akan disusun setelah proposal ini disetujui.
+Proposal ini ditujukan khusus bagi **Manajemen non-teknis, Pemilik Bisnis, dan Pengambil Keputusan (Stakeholders)**.
 
 ## Hubungan Proposal dengan Hasil Riset (Discovery)
-Proposal ini bukanlah dokumen yang dibangun berdasarkan asumsi acak, melainkan merupakan rangkuman tingkat bisnis yang disintesis dari dokumen *Deep Product Discovery* (terletak di folder `docs/discovery/`). Riset tersebut dilakukan dengan menganalisis standar industri platform manajemen bisnis terintegrasi saat ini, dengan **Majoo** sebagai salah satu acuan (*benchmark*) utama. Pembandingan ini bertujuan semata-mata untuk memahami kelengkapan fitur yang ideal bagi sebuah platform operasional bisnis modern, bukan untuk menyalin atau menduplikasi sistem tersebut. 
+Tim telah melakukan riset dan studi *benchmark* terhadap platform sejenis di pasar untuk memahami cakupan *capability* yang umum dibutuhkan dalam sebuah sistem manajemen bisnis modern. Dalam hal ini, **Majoo** digunakan sebagai salah satu *benchmark* utama untuk melihat kelebaran fungsi (*breadth of capability*) yang tersedia di pasar.
+
+Pemahaman awal tim yang tertuang dalam dokumen ini bersumber dari riset tersebut. Namun, hasil riset ini tidak serta-merta menjadi *requirement* final. Manajemen berhak dan diharapkan untuk meninjau, menambah, mengurangi, atau menggeser prioritas fitur agar sesuai dengan konteks dan ekspektasi operasional bisnis kita.
 
 ## Status Dokumen Saat Ini
 **DRAFT / FOR MANAGEMENT REVIEW**
-Dokumen ini sedang dalam tahap ulasan manajemen. Fitur, ruang lingkup, dan tahapan pengembangan yang diusulkan di dalamnya masih dapat disesuaikan dan membutuhkan validasi strategis sebelum tim teknis melangkah ke tahap desain sistem (Technical System Design) dan konstruksi.
+Status ini berarti dokumen telah siap digunakan sebagai bahan diskusi dan penyelarasan dengan manajemen. Status ini **tidak** berarti bahwa ruang lingkup produk yang diusulkan sudah bersifat final. Blueprint produk final baru akan dirumuskan setelah proses penyamaan pemahaman (*alignment*) ini selesai.
