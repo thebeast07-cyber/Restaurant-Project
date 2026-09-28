@@ -59,6 +59,14 @@ public static class TestApiClient
         return await client.PostAsJsonAsync($"/api/orders/{orderId}/void", new { pin, reason });
     }
 
+    public static async Task<HttpResponseMessage> AdjustStockAsync(
+        this HttpClient client, Guid ingredientId, decimal? countedQuantity = null, decimal? deltaQuantity = null, string reason = "test")
+    {
+        return await client.PostAsJsonAsync(
+            $"/api/ingredients/{ingredientId}/stock-adjustment",
+            new { countedQuantity, deltaQuantity, reason });
+    }
+
     private record LoginResponseDto(string Token);
     private record OrderDto(Guid Id);
 }

@@ -235,14 +235,29 @@ alongside this one, not a rewrite of it.
   ingredient) and an `AuditLog` (`Action = StockAdjustment`, before/after quantity,
   caller-supplied `Reason`) in the same transaction — same who/when/what/before-after
   shape as Void's audit row (PRD §12).
-- **Deliberately not using the atomic `ExecuteUpdateAsync`-with-WHERE pattern** used
-  everywhere else in this codebase for stock mutations (Checkout, Void). This is a
-  conscious exception, not an oversight: Opname/ManualAdjustment is an infrequent,
-  single-operator admin action (one warehouse staffer physically counting at a time),
-  not a hot concurrent path like checkout — read-then-write here doesn't have the
-  same "20 concurrent requests overselling 5 units" failure mode Day 5 found. If
-  multi-user concurrent stock adjustment ever becomes a real scenario, apply the same
-  conditional-`ExecuteUpdateAsync` fix documented in Concurrency below.
+- **Revised to use the same atomic-conditional-`ExecuteUpdateAsync` discipline as
+  Checkout/Void**, after initially shipping this endpoint as plain read-then-write
+  under the assumption that opname is a low-concurrency, single-operator action.
+  Correct on functional tests, but the same class of bug Day 5 found doesn't need
+  "hot path" traffic to trigger — two people running opname on the same ingredient at
+  once is enough. Two different mutation shapes, so two different fixes:
+  - `ManualAdjustment` (a known delta) needs no compare-and-swap — it's applied as a
+    single conditional increment,
+    `WHERE Quantity + delta >= 0` → `SET Quantity = Quantity + delta`, correct
+    regardless of what Quantity currently is. Verified with `StockAdjustmentRaceTests`:
+    20 concurrent `+1` deltas on one Ingredient land exactly 20 `StockMovement` rows
+    and the final `Quantity` is exactly `starting + 20` — no lost updates.
+  - `Opname` (an absolute counted value) is different: "the count was 4800" is only
+    valid against the Quantity it was counted against, so it's applied
+    compare-and-swap style — `WHERE Quantity == quantityJustRead` → `SET Quantity =
+    countedValue` — and a concurrent write in between makes it fail with a `409`
+    telling the caller to re-count and retry, rather than silently overwriting
+    whatever the other write just did. Verified: 10 concurrent opname counts against
+    the same ingredient → exactly 1 succeeds, the rest get `409`.
+  - Creating the `Stock` row on first use follows the same upsert-by-catch pattern as
+    `ShiftsController.Open`'s partial unique index: try the insert, and if the unique
+    index on `(TenantId, BranchId, IngredientId)` rejects it because another request
+    won the race, just proceed against the row that already exists.
 - `GET /api/ingredients` now also returns `CurrentStock` per ingredient (left-joined
   against `Stock`, `0` if no row exists) — needed so a future opname screen can
   prefill "system says X" before staff key in the physical count.

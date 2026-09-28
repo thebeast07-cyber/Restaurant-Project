@@ -66,6 +66,12 @@ public class IngredientsController : ControllerBase
     /// permission the discovery docs assign to "Warehouse Staff" is exercised by
     /// Owner/Manager here instead. Writes an AuditLog with before/after quantity,
     /// same requirement as Void (PRD §12: sensitive actions need who/when/what).
+    ///
+    /// Both branches apply Quantity via an atomic conditional UPDATE, never a
+    /// read-then-write on the tracked entity — same discipline as Checkout's stock
+    /// deduction (Day 5) and Void's stock restore (Day 9), because a warehouse opname
+    /// racing a concurrent Sale/ManualAdjustment on the same Ingredient is exactly the
+    /// lost-update shape Day 5 found, just triggered by a different actor.
     /// </summary>
     [HttpPost("{ingredientId:guid}/stock-adjustment")]
     [Authorize(Roles = "Owner,Manager")]
@@ -76,61 +82,101 @@ public class IngredientsController : ControllerBase
             return BadRequest(new { message = "Provide exactly one of CountedQuantity (Opname) or DeltaQuantity (ManualAdjustment)." });
         }
 
-        var ingredient = await _db.Ingredients.SingleOrDefaultAsync(i => i.Id == ingredientId);
-        if (ingredient is null)
+        if (!await _db.Ingredients.AnyAsync(i => i.Id == ingredientId))
         {
             return NotFound();
         }
 
         var userId = User.GetUserId();
 
-        // Not a hot concurrent path like Checkout (one warehouse staffer counting
-        // stock at a time in practice) — read-then-write here is an accepted
-        // trade-off, unlike the ExecuteUpdateAsync pattern used for Sale/Void.
-        await using var transaction = await _db.Database.BeginTransactionAsync();
-
-        var stock = await _db.Stocks.SingleOrDefaultAsync(s => s.IngredientId == ingredientId);
-        if (stock is null)
+        // Upsert-by-catch: two concurrent first-ever adjustments on a brand-new
+        // Ingredient can both try to create the Stock row; the unique index on
+        // (TenantId, BranchId, IngredientId) lets one through, same race-handling
+        // shape as ShiftsController.Open's partial unique index.
+        if (!await _db.Stocks.AnyAsync(s => s.IngredientId == ingredientId))
         {
-            stock = new Stock
+            _db.Stocks.Add(new Stock
             {
                 TenantId = _tenant.TenantId!.Value,
                 BranchId = _tenant.BranchId!.Value,
                 IngredientId = ingredientId,
                 Quantity = 0
-            };
-            _db.Stocks.Add(stock);
+            });
+
+            try
+            {
+                await _db.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                _db.ChangeTracker.Clear();
+            }
         }
 
-        var quantityBefore = stock.Quantity;
-        StockMovementReason reason;
-        decimal changeQuantity;
+        await using var transaction = await _db.Database.BeginTransactionAsync();
 
-        if (request.CountedQuantity is not null)
+        decimal quantityBefore;
+        decimal quantityAfter;
+        decimal changeQuantity;
+        StockMovementReason reason;
+
+        if (request.DeltaQuantity is not null)
         {
-            reason = StockMovementReason.Opname;
-            changeQuantity = request.CountedQuantity.Value - quantityBefore;
+            reason = StockMovementReason.ManualAdjustment;
+            changeQuantity = request.DeltaQuantity.Value;
+
+            if (changeQuantity == 0)
+            {
+                await transaction.RollbackAsync();
+                return BadRequest(new { message = "Adjustment results in no change to stock." });
+            }
+
+            // A pure delta needs no compare-and-swap — applying it as a conditional
+            // increment is correct no matter what Quantity currently is.
+            var rows = await _db.Stocks
+                .Where(s => s.IngredientId == ingredientId && s.Quantity + changeQuantity >= 0)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(s => s.Quantity, s => s.Quantity + changeQuantity));
+
+            if (rows == 0)
+            {
+                await transaction.RollbackAsync();
+                return BadRequest(new { message = "Adjustment would result in negative stock." });
+            }
+
+            quantityAfter = await _db.Stocks.Where(s => s.IngredientId == ingredientId)
+                .Select(s => s.Quantity).SingleAsync();
+            quantityBefore = quantityAfter - changeQuantity;
         }
         else
         {
-            reason = StockMovementReason.ManualAdjustment;
-            changeQuantity = request.DeltaQuantity!.Value;
-        }
+            reason = StockMovementReason.Opname;
 
-        var quantityAfter = quantityBefore + changeQuantity;
-        if (quantityAfter < 0)
-        {
-            await transaction.RollbackAsync();
-            return BadRequest(new { message = "Adjustment would result in negative stock." });
-        }
+            // Opname sets an absolute counted value, so it can only be applied
+            // compare-and-swap style against the exact Quantity it was counted
+            // against — if something else changes Quantity between our read and
+            // write, the stale "the count was X" write must not silently clobber it.
+            quantityBefore = await _db.Stocks.Where(s => s.IngredientId == ingredientId)
+                .Select(s => s.Quantity).SingleAsync();
+            changeQuantity = request.CountedQuantity!.Value - quantityBefore;
 
-        if (changeQuantity == 0)
-        {
-            await transaction.RollbackAsync();
-            return BadRequest(new { message = "Adjustment results in no change to stock." });
-        }
+            if (changeQuantity == 0)
+            {
+                await transaction.RollbackAsync();
+                return BadRequest(new { message = "Adjustment results in no change to stock." });
+            }
 
-        stock.Quantity = quantityAfter;
+            var rows = await _db.Stocks
+                .Where(s => s.IngredientId == ingredientId && s.Quantity == quantityBefore)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(s => s.Quantity, request.CountedQuantity!.Value));
+
+            if (rows == 0)
+            {
+                await transaction.RollbackAsync();
+                return Conflict(new { message = "Stock changed concurrently while counting — retry the opname." });
+            }
+
+            quantityAfter = request.CountedQuantity.Value;
+        }
 
         _db.StockMovements.Add(new StockMovement
         {
