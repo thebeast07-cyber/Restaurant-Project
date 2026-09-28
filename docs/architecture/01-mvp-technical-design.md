@@ -182,13 +182,22 @@ AuditLog
 
 Pendekatan: **walking skeleton dulu** — alur inti (order → bayar cash → stok berkurang → jurnal tercatat) harus hidup end-to-end secepat mungkin (target Hari 5), baru dilebarkan. Ini supaya risiko integrasi ketahuan lebih awal, bukan di hari terakhir.
 
+> **Keputusan eksplisit (setelah Hari 3): backend-first, UI menyusul.** Draft awal
+> dokumen ini menyiratkan UI dibangun paralel per hari (lihat kolom "Output terukur"
+> di bawah, beberapa masih menyebut "dari UI" — dibiarkan apa adanya sebagai jejak
+> histori, bukan rencana aktual). Kenyataannya Hari 1-3 dibangun **backend/API murni**,
+> divalidasi via `curl`, tanpa frontend sama sekali. Manajemen mengonfirmasi ini
+> memang yang diinginkan: kejar walking skeleton backend penuh dulu, UI dibangun
+> sebagai blok kerja terpisah setelahnya (belum dijadwalkan hari spesifiknya — akan
+> ditentukan setelah backend P0 selesai, kemungkinan menggeser total hari sprint).
+
 | Hari | Fokus | Output terukur |
 |---|---|---|
-| 1 | Project scaffolding, DB setup, seed Tenant/Branch/User, Auth (login + role) | Bisa login sebagai Owner/Manager/Cashier |
-| 2 | Catalog minimal: Category, Product, Ingredient, Recipe (CRUD dasar + seed menu contoh) | Menu contoh tampil, ada mapping ke bahan baku |
-| 3 | Order: cart, Table select, tambah item, hitung total | Order draft bisa dibuat dari UI |
-| 4 | Checkout Cash-only → `OrderPaid` → Inventory deduction + Finance journal | **Milestone: walking skeleton hidup** — order jadi paid, stok turun, jurnal balance |
-| 5 | Buffer/fix walking skeleton + demo ke Anda | Anda bisa coba alur inti end-to-end |
+| 1 | Project scaffolding, DB setup, seed Tenant/Branch/User, Auth (login + role) | Bisa login sebagai Owner/Manager/Cashier (API only) |
+| 2 | Catalog minimal: Category, Product, Ingredient, Recipe (CRUD dasar + seed menu contoh) | Menu contoh tampil via API, ada mapping ke bahan baku |
+| 3 | Order: cart, Table select, tambah item, hitung total | Order draft bisa dibuat via API |
+| 4 | Checkout Cash-only → `OrderPaid` → Inventory deduction + Finance journal | **Milestone: walking skeleton hidup** — order jadi paid (via API), stok turun, jurnal balance |
+| 5 | Buffer/fix walking skeleton + demo ke Anda | Demo alur inti via API call terstruktur (curl/Postman), bukan UI |
 | 6 | Payment QRIS (statis + konfirmasi manual) | Checkout mendukung 2 metode bayar |
 | 7 | Station routing (Kitchen/Bar) + integrasi print tiket | Order tercetak otomatis ke printer sesuai station |
 | 8 | Table management penuh (status Available/Occupied, multi-table concurrent) | Beberapa meja bisa aktif bersamaan tanpa bentrok |
