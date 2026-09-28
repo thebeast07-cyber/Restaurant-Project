@@ -37,12 +37,27 @@ public class OrdersController : ControllerBase
             return BadRequest(new { message = "Open a shift before creating an order." });
         }
 
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+
         if (request.TableId is not null)
         {
-            var tableExists = await _db.Tables.AnyAsync(t => t.Id == request.TableId);
-            if (!tableExists)
+            // Atomically claim the table (Available -> Occupied) instead of a plain
+            // existence check — same class of race as Shift/Stock/Order-checkout
+            // above: two concurrent "seat a party at table X" requests must not both
+            // succeed. Postgres row-locks the Table row for the UPDATE's duration, so
+            // only the first to arrive can match `Status == Available`.
+            var claimed = await _db.Tables
+                .Where(t => t.Id == request.TableId && t.Status == TableStatus.Available)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(t => t.Status, TableStatus.Occupied));
+
+            if (claimed == 0)
             {
-                return BadRequest(new { message = "TableId not found." });
+                await transaction.RollbackAsync();
+                var tableExists = await _db.Tables.AnyAsync(t => t.Id == request.TableId);
+                return BadRequest(new
+                {
+                    message = tableExists ? "Table is already occupied." : "TableId not found."
+                });
             }
         }
 
@@ -56,6 +71,7 @@ public class OrdersController : ControllerBase
 
         _db.Orders.Add(order);
         await _db.SaveChangesAsync();
+        await transaction.CommitAsync();
 
         return Ok(await BuildOrderResponse(order.Id));
     }
@@ -329,6 +345,18 @@ public class OrdersController : ControllerBase
         // nothing more to do here. (Not setting `order.Status` on the tracked entity
         // too: it was loaded before the claim, so its in-memory value is stale, and
         // setting it now would just queue a redundant UPDATE in SaveChangesAsync.)
+
+        // --- 6. Free the table, if any ---
+        // Only this Order could have had it Occupied (Create claims it exclusively),
+        // so an unconditional release is safe here — no "was it still mine" check
+        // needed. Void (Day 9, not built yet) will need the same release.
+        if (order.TableId is not null)
+        {
+            await _db.Tables
+                .Where(t => t.Id == order.TableId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(t => t.Status, TableStatus.Available));
+        }
+
         await _db.SaveChangesAsync();
         await transaction.CommitAsync();
 

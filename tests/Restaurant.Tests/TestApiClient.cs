@@ -30,12 +30,18 @@ public static class TestApiClient
         }
     }
 
-    public static async Task<Guid> CreateOrderAsync(this HttpClient client)
+    public static async Task<Guid> CreateOrderAsync(this HttpClient client, Guid? tableId = null)
     {
-        var response = await client.PostAsJsonAsync("/api/orders", new { tableId = (Guid?)null });
+        var response = await client.CreateOrderRawAsync(tableId);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<OrderDto>();
         return body!.Id;
+    }
+
+    /// <summary>Raw response variant for tests that need to assert on failure status codes too.</summary>
+    public static async Task<HttpResponseMessage> CreateOrderRawAsync(this HttpClient client, Guid? tableId = null)
+    {
+        return await client.PostAsJsonAsync("/api/orders", new { tableId });
     }
 
     public static async Task<HttpResponseMessage> AddItemAsync(this HttpClient client, Guid orderId, Guid productId, int quantity)

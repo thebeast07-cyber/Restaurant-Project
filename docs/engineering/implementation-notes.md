@@ -14,7 +14,7 @@ way — for whoever joins this codebase next (including future-us).
 
 ## Current State
 
-Sprint day: **7 / 14** (see technical design doc for the full day-by-day plan).
+Sprint day: **8 / 14** (see technical design doc for the full day-by-day plan).
 **Walking skeleton milestone reached** (Day 4): Order → Checkout → Inventory deducted
 via Recipe → balanced Finance journal posted, all in one atomic transaction. Verified
 down to raw SQL, not just API responses. **Day 5**: stress-tested the concurrent paths
@@ -28,9 +28,9 @@ separate block of work, not interleaved per day as the original sprint table imp
 Done: Identity/Auth, multi-tenant isolation, Catalog + Recipe, Table/Shift/Order (cart),
 Payment (Cash + QRIS-manual), Inventory deduction, Finance journal (background, no UI),
 station ticket routing/formatting (content only — no physical printer wired yet,
-pending hardware confirmation).
-Not started: physical printer integration, Void, Table occupancy locking, Shift close,
-Reporting, any UI.
+pending hardware confirmation), full table occupancy lifecycle (Available <-> Occupied,
+concurrency-safe).
+Not started: physical printer integration, Void, Shift close, Reporting, any UI.
 
 ## Running Locally
 
@@ -154,14 +154,34 @@ alongside this one, not a rewrite of it.
   **zero dependency on an actual printer**. It returns ticket content as strings in the
   API response; nothing is sent to hardware. Tested: a 2-item order (1 Kitchen, 1 Bar
   product) correctly produces exactly 2 tickets, each listing only its own items.
-- **Blocked on hardware**: wiring this content to a real thermal printer (ESC/POS,
-  over USB/LAN/Bluetooth depending on the model) needs a confirmed physical unit,
-  which wasn't available as of this write-up. When it is, the plan is to add a thin
-  adapter that takes `StationTicket.Content` and sends it to the device —
-  `StationTicketFormatter` itself shouldn't need to change.
+- **Blocked on hardware**: wiring this content to a real thermal printer needs a
+  confirmed physical unit + connection type. Unit is available, but **Bluetooth is
+  ruled out on the dev machine (Fedora Linux, no working BT stack for this)**. Waiting
+  on which of LAN/Ethernet (preferred — raw ESC/POS over a TCP socket to port 9100,
+  no special driver needed, and works the same if the server later moves off this
+  machine) or USB (works, but ties the printer to whichever machine physically runs
+  the API) the unit actually supports, plus the model name. `StationTicketFormatter`
+  itself won't need to change either way — only the adapter that consumes its output.
 - Checkout still accepts an order in `Draft` (never sent to station) or `Open` (sent)
   — sending to station isn't a prerequisite for payment in this implementation, only
   a prerequisite for the kitchen/bar knowing what to prepare.
+
+### Table Occupancy (Day 8)
+- `RestaurantTable.Status` is now actually maintained, not just a schema field nobody
+  touched: `OrdersController.Create` atomically claims it (`Available` → `Occupied`,
+  same `ExecuteUpdateAsync`-with-WHERE pattern as every other claim in this codebase)
+  when a `TableId` is given, and `Checkout` releases it back to `Available`
+  unconditionally once the order completes — safe because `Create`'s claim guarantees
+  only one Order can ever hold a given Table at a time, so there's nothing to check
+  before releasing it.
+- Verified with a dedicated stress test (`TableClaimRaceTests`): 15 concurrent
+  "create order for table X" requests, exactly 1 succeeds, table ends up `Occupied`
+  (not double-booked). This one passed on the first run — built the atomic claim in
+  from the start this time instead of retrofitting it after a failing test, applying
+  the lesson from Day 5/7 directly.
+- **Void isn't built yet (Day 9)** — when it is, it also needs to release the table
+  (same as Checkout does), or a voided order would leave its table stuck `Occupied`
+  forever with no order actually using it.
 
 ### Concurrency
 - "At most one open Shift per user" is enforced by a **partial unique index**
