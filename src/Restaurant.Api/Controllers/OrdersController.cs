@@ -171,6 +171,25 @@ public class OrdersController : ControllerBase
         var userId = User.GetUserId();
         await using var transaction = await _db.Database.BeginTransactionAsync();
 
+        // Atomically claim the order before doing anything else — this is the same
+        // class of bug as the stock race above, just at the Order level instead of
+        // per-Ingredient: two concurrent checkout calls on the SAME order could both
+        // pass the "status is Draft/Open" check above before either commits, resulting
+        // in double payment/journal/stock-deduction for one order. Verified with a
+        // stress test: 10 concurrent checkouts on one order all "succeeded" before this
+        // fix. The condition in this UPDATE's WHERE clause is re-evaluated by Postgres
+        // against the current committed row, so only the first request to reach here
+        // can ever match it.
+        var claimed = await _db.Orders
+            .Where(o => o.Id == orderId && (o.Status == OrderStatus.Draft || o.Status == OrderStatus.Open))
+            .ExecuteUpdateAsync(setters => setters.SetProperty(o => o.Status, OrderStatus.Completed));
+
+        if (claimed == 0)
+        {
+            await transaction.RollbackAsync();
+            return BadRequest(new { message = "This order was already checked out by another request." });
+        }
+
         var shortages = new List<object>();
         var deducted = new List<(Guid IngredientId, decimal Quantity)>();
 
@@ -250,9 +269,10 @@ public class OrdersController : ControllerBase
         journalEntry.AssertBalanced();
         _db.JournalEntries.Add(journalEntry);
 
-        // --- 6. Complete the order ---
-        order.Status = OrderStatus.Completed;
-
+        // Order.Status was already atomically flipped to Completed by the claim above —
+        // nothing more to do here. (Not setting `order.Status` on the tracked entity
+        // too: it was loaded before the claim, so its in-memory value is stale, and
+        // setting it now would just queue a redundant UPDATE in SaveChangesAsync.)
         await _db.SaveChangesAsync();
         await transaction.CommitAsync();
 
@@ -262,7 +282,14 @@ public class OrdersController : ControllerBase
 
     private async Task<OrderResponse?> BuildOrderResponse(Guid orderId)
     {
-        var order = await _db.Orders.Include(o => o.Items).SingleOrDefaultAsync(o => o.Id == orderId);
+        // AsNoTracking is required here, not just a perf nicety: Checkout mutates
+        // Order.Status via ExecuteUpdateAsync (a raw atomic UPDATE, bypassing the
+        // change tracker). Without AsNoTracking, EF Core's identity map hands back the
+        // Order instance already tracked from earlier in the same request — with its
+        // stale, pre-checkout Status — instead of re-reading the column from the DB.
+        // Caught this via manual smoke test after the checkout-race fix: the response
+        // reported "Draft" for an order that had just been successfully completed.
+        var order = await _db.Orders.AsNoTracking().Include(o => o.Items).SingleOrDefaultAsync(o => o.Id == orderId);
         if (order is null)
         {
             return null;

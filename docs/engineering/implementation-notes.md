@@ -159,6 +159,30 @@ an authenticated request path.
   plentiful stock, 50 genuinely concurrent full checkout flows, asserting the **exact**
   final quantity (not just "no errors") — a lost update here would under-deduct
   silently while every request still reports `200 OK`. Also passes post-fix.
+- **A third, independent race: two concurrent checkouts on the SAME order.** The stock
+  fix above says nothing about whether the *Order* itself can be checked out twice —
+  it only guards the Ingredient quantity. Wrote a targeted follow-up stress test
+  (`OrderCheckoutRaceTests`) that fires 10 concurrent checkout calls at one Order: all
+  10 "succeeded" before the fix — 10x Payment, 10x JournalEntry, 10x stock deduction
+  for what should be a single sale. Fixed the same way as the stock race: atomically
+  claim the Order via
+  `_db.Orders.Where(o => o.Id == orderId && (Status == Draft || Status == Open)).ExecuteUpdateAsync(SetProperty(o => o.Status, Completed))`
+  as the very first write inside the transaction, checking rows-affected, before any
+  stock/payment/journal work happens. Only the request that wins the claim proceeds;
+  everyone else gets a clean 400 immediately. Re-verified 3x for stability: exactly 1
+  of 10 succeeds every time.
+  - **Follow-on bug this fix introduced, caught by manual smoke test (not the stress
+    test)**: `ExecuteUpdateAsync` writes directly to the DB and bypasses EF Core's
+    change tracker, so the `Order` instance already loaded earlier in the same request
+    keeps its stale pre-checkout `Status` in memory. `BuildOrderResponse` then
+    re-queried on the *same* `DbContext`, and EF's identity map handed back that
+    already-tracked (stale) instance instead of re-reading the column — so a
+    successful checkout's response reported `"status": "Draft"` even though the DB
+    correctly said `Completed`. Fixed with `.AsNoTracking()` on the query in
+    `BuildOrderResponse`. **Lesson**: after any `ExecuteUpdateAsync`/raw SQL mutation
+    within a request, don't trust a tracked re-query on the same context to reflect
+    it — use `AsNoTracking()` (or re-attach/reload explicitly) for anything read back
+    afterward.
 
 ## Gotchas (bugs already hit — read before you hit them again)
 
