@@ -14,7 +14,7 @@ way — for whoever joins this codebase next (including future-us).
 
 ## Current State
 
-Sprint day: **8 / 14** (see technical design doc for the full day-by-day plan).
+Sprint day: **9 / 14** (see technical design doc for the full day-by-day plan).
 **Walking skeleton milestone reached** (Day 4): Order → Checkout → Inventory deducted
 via Recipe → balanced Finance journal posted, all in one atomic transaction. Verified
 down to raw SQL, not just API responses. **Day 5**: stress-tested the concurrent paths
@@ -29,8 +29,9 @@ Done: Identity/Auth, multi-tenant isolation, Catalog + Recipe, Table/Shift/Order
 Payment (Cash + QRIS-manual), Inventory deduction, Finance journal (background, no UI),
 station ticket routing/formatting (content only — no physical printer wired yet,
 pending hardware confirmation), full table occupancy lifecycle (Available <-> Occupied,
-concurrency-safe).
-Not started: physical printer integration, Void, Shift close, Reporting, any UI.
+concurrency-safe), Void (PIN-gated, reverses stock + journal, releases table, audited).
+Not started: physical printer integration, Stock adjustment/opname, Shift close,
+Reporting, any UI.
 
 ## Running Locally
 
@@ -179,9 +180,39 @@ alongside this one, not a rewrite of it.
   (not double-booked). This one passed on the first run — built the atomic claim in
   from the start this time instead of retrofitting it after a failing test, applying
   the lesson from Day 5/7 directly.
-- **Void isn't built yet (Day 9)** — when it is, it also needs to release the table
-  (same as Checkout does), or a voided order would leave its table stuck `Occupied`
-  forever with no order actually using it.
+- ~~Void isn't built yet~~ — done Day 9, see below; it releases the table.
+
+### Void (Day 9)
+- `POST /api/orders/{id}/void`: gated to `Owner,Manager` roles via `[Authorize]`, and
+  separately requires the calling user's own PIN (`BCrypt.Verify` against their
+  `PinHash`) as a second factor — matches the permission matrix (discovery/04:
+  Cashier is denied outright, Manager/Owner execute with PIN). Only voids `Completed`
+  orders on the **same calendar day** (UTC date comparison) — matches the Void vs
+  Refund distinction from discovery/05 (Void = same-day pre-settlement undo, Refund =
+  separate post-settlement credit, not built).
+- Reverses everything Checkout did, without touching the original records:
+  - **Stock**: restores exactly what was deducted, by reading back the original
+    `StockMovement` rows (`Reason == Sale`) for this order and writing new ones with
+    `Reason == Void` and the negated quantity — the Sale movements stay in the table
+    forever, this doesn't edit or delete them. Restoring the actual `Stock.Quantity`
+    still goes through the same atomic `ExecuteUpdateAsync` pattern as Checkout.
+  - **Journal**: posts a **new** `JournalEntry` with `IsReversal = true` and
+    `ReversalOfId` pointing at the original, with every line's Debit/Credit swapped —
+    never edits the original entry (docs/product/PRD.md §12, hard requirement).
+    Verified: original + reversal lines sum to exactly zero per account when combined.
+  - **Table**: released back to `Available`, same unconditional-release reasoning as
+    Checkout (Create's claim already guarantees exclusive ownership).
+  - **AuditLog**: new entity (`Restaurant.Domain.Audit`), records who/when/what
+    (`EntityType`/`EntityId`) plus before/after status snapshots and the manager's
+    stated reason. Append-only — nothing in this codebase updates or deletes an
+    `AuditLog` row after creation.
+- All of the above happens in one transaction with the same atomic Order-status claim
+  pattern as Checkout (`Completed` → `Voided`, checking rows-affected) guarding the
+  whole thing — two concurrent void attempts on one order must not both succeed, or
+  stock gets double-restored and two reversal journals get posted for one sale.
+  Verified with `VoidRaceTests` (10 concurrent void attempts on one order, exactly 1
+  succeeds) — built the atomic claim in from the start again, consistent with Day 8;
+  passed on the first run.
 
 ### Concurrency
 - "At most one open Shift per user" is enforced by a **partial unique index**

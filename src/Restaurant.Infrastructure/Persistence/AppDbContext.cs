@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
+using Restaurant.Domain.Audit;
 using Restaurant.Domain.Catalog;
 using Restaurant.Domain.Common;
 using Restaurant.Domain.Finance;
@@ -39,6 +40,7 @@ public class AppDbContext : DbContext
     public DbSet<JournalLine> JournalLines => Set<JournalLine>();
     public DbSet<PaymentMethod> PaymentMethods => Set<PaymentMethod>();
     public DbSet<Domain.Payment.Payment> Payments => Set<Domain.Payment.Payment>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -167,6 +169,12 @@ public class AppDbContext : DbContext
             p.HasIndex(x => x.OrderId);
             p.HasOne<Order>().WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
             p.HasOne<PaymentMethod>().WithMany().HasForeignKey(x => x.PaymentMethodId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<AuditLog>(a =>
+        {
+            a.ToTable("audit_logs");
+            a.HasIndex(x => new { x.TenantId, x.BranchId, x.EntityType, x.EntityId });
         });
 
         ApplyTenantQueryFilters(modelBuilder);

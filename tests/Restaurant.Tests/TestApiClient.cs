@@ -54,6 +54,11 @@ public static class TestApiClient
         return await client.PostAsJsonAsync($"/api/orders/{orderId}/checkout", new { paymentMethod });
     }
 
+    public static async Task<HttpResponseMessage> VoidOrderAsync(this HttpClient client, Guid orderId, string pin, string? reason = null)
+    {
+        return await client.PostAsJsonAsync($"/api/orders/{orderId}/void", new { pin, reason });
+    }
+
     private record LoginResponseDto(string Token);
     private record OrderDto(Guid Id);
 }

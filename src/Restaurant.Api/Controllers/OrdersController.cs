@@ -1,9 +1,11 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Restaurant.Api.Auth;
 using Restaurant.Api.Contracts;
 using Restaurant.Api.Printing;
+using Restaurant.Domain.Audit;
 using Restaurant.Domain.Common;
 using Restaurant.Domain.Finance;
 using Restaurant.Domain.Inventory;
@@ -362,6 +364,147 @@ public class OrdersController : ControllerBase
 
         var orderResponse = await BuildOrderResponse(order.Id);
         return Ok(new CheckoutResponse(orderResponse!, payment.Id, payment.Amount, journalEntry.Id));
+    }
+
+    /// <summary>
+    /// The OrderVoided event: neutralizes a same-day, pre-settlement Completed order
+    /// (docs/architecture/01-mvp-technical-design.md §3.2, Workflow Status Dictionary
+    /// in discovery/05 — Void ≠ Refund: Void undoes a same-day mistake, Refund is a
+    /// separate post-settlement credit and is NOT built yet). Reverses stock, posts a
+    /// reversal journal entry (never edits the original), releases the table, and
+    /// writes an AuditLog — all in one transaction, same all-or-nothing guarantee as
+    /// Checkout.
+    /// </summary>
+    [HttpPost("{orderId:guid}/void")]
+    [Authorize(Roles = "Owner,Manager")]
+    public async Task<ActionResult<VoidOrderResponse>> Void(Guid orderId, VoidOrderRequest request)
+    {
+        var order = await _db.Orders.SingleOrDefaultAsync(o => o.Id == orderId);
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        if (order.Status != OrderStatus.Completed)
+        {
+            return BadRequest(new { message = $"Cannot void an order in status {order.Status}." });
+        }
+
+        if (order.CreatedAt.UtcDateTime.Date != DateTimeOffset.UtcNow.UtcDateTime.Date)
+        {
+            return BadRequest(new { message = "Orders can only be voided on the same business day, before settlement." });
+        }
+
+        var userId = User.GetUserId();
+        var authorizer = await _db.Users.SingleAsync(u => u.Id == userId);
+        if (authorizer.PinHash is null || !BCrypt.Net.BCrypt.Verify(request.Pin, authorizer.PinHash))
+        {
+            return Unauthorized(new { message = "Invalid PIN." });
+        }
+
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+
+        // Atomic claim, same pattern as every other status transition in this
+        // controller — two concurrent void attempts on the same order must not both
+        // succeed (would double-restore stock and post two reversal journals).
+        var claimed = await _db.Orders
+            .Where(o => o.Id == orderId && o.Status == OrderStatus.Completed)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(o => o.Status, OrderStatus.Voided));
+
+        if (claimed == 0)
+        {
+            await transaction.RollbackAsync();
+            return BadRequest(new { message = "Order was already voided by another request." });
+        }
+
+        // --- Reverse stock: restore exactly what the original Sale deducted ---
+        var saleMovements = await _db.StockMovements
+            .Where(m => m.ReferenceType == "Order" && m.ReferenceId == orderId && m.Reason == StockMovementReason.Sale)
+            .ToListAsync();
+
+        foreach (var movement in saleMovements)
+        {
+            var restoreQuantity = -movement.ChangeQuantity; // original ChangeQuantity was negative
+            await _db.Stocks
+                .Where(s => s.IngredientId == movement.IngredientId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(s => s.Quantity, s => s.Quantity + restoreQuantity));
+
+            _db.StockMovements.Add(new StockMovement
+            {
+                TenantId = _tenant.TenantId!.Value,
+                BranchId = _tenant.BranchId!.Value,
+                IngredientId = movement.IngredientId,
+                ChangeQuantity = restoreQuantity,
+                Reason = StockMovementReason.Void,
+                ReferenceType = "Order",
+                ReferenceId = orderId,
+                CreatedByUserId = authorizer.Id
+            });
+        }
+
+        // --- Reverse the journal: a NEW entry with swapped Debit/Credit, never edit
+        // the original (docs/product/PRD.md §12) ---
+        var originalJournal = await _db.JournalEntries
+            .Include(j => j.Lines)
+            .SingleOrDefaultAsync(j => j.ReferenceType == "Order" && j.ReferenceId == orderId && !j.IsReversal);
+
+        Guid? reversalJournalId = null;
+        if (originalJournal is not null)
+        {
+            var reversal = new JournalEntry
+            {
+                TenantId = _tenant.TenantId!.Value,
+                BranchId = _tenant.BranchId!.Value,
+                ReferenceType = "Order",
+                ReferenceId = orderId,
+                IsReversal = true,
+                ReversalOfId = originalJournal.Id
+            };
+
+            foreach (var line in originalJournal.Lines)
+            {
+                reversal.Lines.Add(new JournalLine
+                {
+                    TenantId = _tenant.TenantId!.Value,
+                    JournalEntryId = reversal.Id,
+                    AccountId = line.AccountId,
+                    Debit = line.Credit,
+                    Credit = line.Debit
+                });
+            }
+
+            reversal.AssertBalanced();
+            _db.JournalEntries.Add(reversal);
+            reversalJournalId = reversal.Id;
+        }
+
+        // --- Free the table, if any (same as Checkout — Create's claim guarantees
+        // exclusive ownership, so an unconditional release is safe) ---
+        if (order.TableId is not null)
+        {
+            await _db.Tables
+                .Where(t => t.Id == order.TableId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(t => t.Status, TableStatus.Available));
+        }
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            TenantId = _tenant.TenantId!.Value,
+            BranchId = _tenant.BranchId!.Value,
+            UserId = authorizer.Id,
+            Action = AuditAction.Void,
+            EntityType = "Order",
+            EntityId = orderId,
+            BeforeValue = JsonSerializer.Serialize(new { Status = "Completed" }),
+            AfterValue = JsonSerializer.Serialize(new { Status = "Voided" }),
+            Reason = request.Reason
+        });
+
+        await _db.SaveChangesAsync();
+        await transaction.CommitAsync();
+
+        var orderResponse = await BuildOrderResponse(orderId);
+        return Ok(new VoidOrderResponse(orderResponse!, reversalJournalId));
     }
 
     private async Task<OrderResponse?> BuildOrderResponse(Guid orderId)
