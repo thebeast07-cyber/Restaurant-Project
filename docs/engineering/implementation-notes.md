@@ -110,15 +110,11 @@ an authenticated request path.
 
 ### Payment / Inventory / Finance (Day 4 — walking skeleton)
 - `OrdersController.Checkout` is the `OrderPaid` event handler, implemented as a
-  single in-process method (not a message/broker) that does everything in one
-  `SaveChangesAsync`: validate → deduct stock via Recipe → post journal → complete
-  order. Atomic by construction (one unit of work), not by wrapping multiple calls in
-  an explicit transaction.
-- Stock check happens **before** any mutation (compute required-per-Ingredient first,
-  compare against `Stock.Quantity`, reject with a full shortage list if anything's
-  short). Verified: an over-quantity order that would drain multiple ingredients at
-  once gets rejected with zero partial deduction — checked at the DB, not just via the
-  API response.
+  single in-process method (not a message/broker) wrapped in one explicit DB
+  transaction: deduct stock (atomic per-Ingredient, see Concurrency section below) →
+  write StockMovement audit rows → record Payment → post journal → complete order →
+  commit. If any Ingredient is short, the transaction rolls back — no partial
+  deduction, verified at the DB level, not just via the API response.
 - Journal posts a simple Cash/Revenue pair only — **no COGS/InventoryAsset lines**.
   That needs a per-Ingredient unit cost, which isn't modeled yet (`Ingredient` has no
   cost field). This is a known, deliberate gap, not an oversight — flagged again here
@@ -139,6 +135,30 @@ an authenticated request path.
   This is the pattern to follow for any other "at most one X" invariant going forward
   (don't trust an `AnyAsync` check alone under concurrency — back it with a DB
   constraint and catch `DbUpdateException` to turn the violation into a clean 4xx).
+
+- **Stock deduction is an atomic conditional `UPDATE` per Ingredient, not
+  read-modify-write.** The first version of `Checkout` read `Stock.Quantity`, computed
+  the new value in C#, and wrote it back via the normal change tracker — the textbook
+  lost-update race. A stress test (`StockRaceConditionTests`, see `tests/`) fired 20
+  concurrent checkouts against 5 units of stock: **all 20 "succeeded"**, massively
+  overselling, with zero errors anywhere — this is the dangerous kind of bug, since
+  nothing looks wrong until someone reconciles stock later. Fixed by replacing the
+  read-then-write with
+  `_db.Stocks.Where(s => s.IngredientId == id && s.Quantity >= required).ExecuteUpdateAsync(...)`
+  inside an explicit transaction: this is a single atomic SQL statement, so Postgres
+  row-locks the matched row for its duration — a concurrent request re-evaluates
+  `Quantity >= required` against the value just written, never a stale read. If 0 rows
+  are affected, that Ingredient was short (checked without a separate read
+  beforehand). Re-ran the same stress test after the fix: exactly 5 of 20 succeed, the
+  rest get a clean `400`, final stock is exactly 0, never negative.
+  **Pattern to reuse anywhere else in this codebase that decrements a shared
+  counter/quantity under potential concurrency**: never "SELECT then subtract then
+  SAVE" — use a conditional `ExecuteUpdateAsync` (or raw atomic SQL) and check rows
+  affected instead.
+- A second stress test (`CheckoutLoadTests`) covers the complementary failure mode:
+  plentiful stock, 50 genuinely concurrent full checkout flows, asserting the **exact**
+  final quantity (not just "no errors") — a lost update here would under-deduct
+  silently while every request still reports `200 OK`. Also passes post-fix.
 
 ## Gotchas (bugs already hit — read before you hit them again)
 
