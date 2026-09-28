@@ -14,7 +14,7 @@ way — for whoever joins this codebase next (including future-us).
 
 ## Current State
 
-Sprint day: **6 / 14** (see technical design doc for the full day-by-day plan).
+Sprint day: **7 / 14** (see technical design doc for the full day-by-day plan).
 **Walking skeleton milestone reached** (Day 4): Order → Checkout → Inventory deducted
 via Recipe → balanced Finance journal posted, all in one atomic transaction. Verified
 down to raw SQL, not just API responses. **Day 5**: stress-tested the concurrent paths
@@ -26,8 +26,10 @@ tested via `curl`/integration tests — no frontend exists yet. UI is a delibera
 separate block of work, not interleaved per day as the original sprint table implied.
 
 Done: Identity/Auth, multi-tenant isolation, Catalog + Recipe, Table/Shift/Order (cart),
-Payment (Cash + QRIS-manual), Inventory deduction, Finance journal (background, no UI).
-Not started: Void, Station ticket printing, Table occupancy locking, Shift close,
+Payment (Cash + QRIS-manual), Inventory deduction, Finance journal (background, no UI),
+station ticket routing/formatting (content only — no physical printer wired yet,
+pending hardware confirmation).
+Not started: physical printer integration, Void, Table occupancy locking, Shift close,
 Reporting, any UI.
 
 ## Running Locally
@@ -142,6 +144,24 @@ happened by eye, then presses what is mechanically the same "Checkout" action as
 If/when a real QRIS gateway integration replaces this (fast-follow, needs a vendor
 decision — see PRD §24), that's an *additive* change: a new async confirmation path
 alongside this one, not a rewrite of it.
+
+### Station Ticket Routing (Day 7)
+- New endpoint `POST /api/orders/{id}/send-to-station`: locks the cart (atomic
+  Draft→Open claim, same guarded-transition pattern as Checkout's Order claim — two
+  concurrent calls must not both succeed, or the kitchen gets duplicate tickets), then
+  groups `OrderItem`s by `Station` and formats one ticket per station.
+- `StationTicketFormatter` (in `Restaurant.Api/Printing/`) is pure text formatting with
+  **zero dependency on an actual printer**. It returns ticket content as strings in the
+  API response; nothing is sent to hardware. Tested: a 2-item order (1 Kitchen, 1 Bar
+  product) correctly produces exactly 2 tickets, each listing only its own items.
+- **Blocked on hardware**: wiring this content to a real thermal printer (ESC/POS,
+  over USB/LAN/Bluetooth depending on the model) needs a confirmed physical unit,
+  which wasn't available as of this write-up. When it is, the plan is to add a thin
+  adapter that takes `StationTicket.Content` and sends it to the device —
+  `StationTicketFormatter` itself shouldn't need to change.
+- Checkout still accepts an order in `Draft` (never sent to station) or `Open` (sent)
+  — sending to station isn't a prerequisite for payment in this implementation, only
+  a prerequisite for the kitchen/bar knowing what to prepare.
 
 ### Concurrency
 - "At most one open Shift per user" is enforced by a **partial unique index**

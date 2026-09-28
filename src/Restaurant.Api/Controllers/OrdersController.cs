@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Restaurant.Api.Auth;
 using Restaurant.Api.Contracts;
+using Restaurant.Api.Printing;
 using Restaurant.Domain.Common;
 using Restaurant.Domain.Finance;
 using Restaurant.Domain.Inventory;
@@ -110,6 +111,61 @@ public class OrdersController : ControllerBase
         await _db.SaveChangesAsync();
 
         return Ok(await BuildOrderResponse(order.Id));
+    }
+
+    /// <summary>
+    /// Locks in the cart and routes items to Kitchen/Bar as printable tickets
+    /// (docs/architecture/01-mvp-technical-design.md §3.1 step 3). No physical printer
+    /// integration yet — this returns formatted ticket text; wiring it to an actual
+    /// ESC/POS device is a thin adapter added once hardware is confirmed available
+    /// (see implementation-notes.md).
+    /// </summary>
+    [HttpPost("{orderId:guid}/send-to-station")]
+    public async Task<ActionResult<SendToStationResponse>> SendToStation(Guid orderId)
+    {
+        var order = await _db.Orders.Include(o => o.Items).SingleOrDefaultAsync(o => o.Id == orderId);
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        if (order.Items.Count == 0)
+        {
+            return BadRequest(new { message = "Cannot send an order with no items to station." });
+        }
+
+        // Atomic claim, same pattern as Checkout's Order-level guard (docs/engineering/
+        // implementation-notes.md, Concurrency section) — two concurrent "send to
+        // station" calls on the same order must not both succeed, or the kitchen gets
+        // duplicate tickets for one order.
+        var claimed = await _db.Orders
+            .Where(o => o.Id == orderId && o.Status == OrderStatus.Draft)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(o => o.Status, OrderStatus.Open));
+
+        if (claimed == 0)
+        {
+            return BadRequest(new { message = "Order was already sent to station, or is not in Draft status." });
+        }
+
+        var productIds = order.Items.Select(i => i.ProductId).Distinct().ToList();
+        var productNames = await _db.Products
+            .Where(p => productIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, p => p.Name);
+
+        string? tableNumber = null;
+        if (order.TableId is not null)
+        {
+            tableNumber = await _db.Tables
+                .Where(t => t.Id == order.TableId)
+                .Select(t => t.Number)
+                .SingleOrDefaultAsync();
+        }
+
+        var ticketItems = order.Items.Select(i => (i.Station, productNames.GetValueOrDefault(i.ProductId, "?"), i.Quantity));
+        var tickets = StationTicketFormatter.Format(order.Id, tableNumber, ticketItems);
+
+        var orderResponse = await BuildOrderResponse(order.Id);
+        return Ok(new SendToStationResponse(orderResponse!, tickets));
     }
 
     /// <summary>
