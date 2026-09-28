@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
+using Restaurant.Domain.Catalog;
 using Restaurant.Domain.Common;
 using Restaurant.Domain.Identity;
 using Restaurant.Domain.Organization;
@@ -19,6 +20,10 @@ public class AppDbContext : DbContext
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<User> Users => Set<User>();
+    public DbSet<Category> Categories => Set<Category>();
+    public DbSet<Ingredient> Ingredients => Set<Ingredient>();
+    public DbSet<Product> Products => Set<Product>();
+    public DbSet<RecipeItem> RecipeItems => Set<RecipeItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -37,6 +42,33 @@ public class AppDbContext : DbContext
             u.ToTable("users");
             u.HasIndex(x => x.TenantId);
             u.HasIndex(x => new { x.TenantId, x.Username }).IsUnique();
+        });
+
+        modelBuilder.Entity<Category>(c =>
+        {
+            c.ToTable("categories");
+            c.HasIndex(x => new { x.TenantId, x.BranchId });
+        });
+
+        modelBuilder.Entity<Ingredient>(i =>
+        {
+            i.ToTable("ingredients");
+            i.HasIndex(x => new { x.TenantId, x.BranchId });
+        });
+
+        modelBuilder.Entity<Product>(p =>
+        {
+            p.ToTable("products");
+            p.HasIndex(x => new { x.TenantId, x.BranchId });
+            p.HasOne<Category>().WithMany().HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<RecipeItem>(r =>
+        {
+            r.ToTable("recipe_items");
+            r.HasIndex(x => x.ProductId);
+            r.HasOne<Ingredient>().WithMany().HasForeignKey(x => x.IngredientId).OnDelete(DeleteBehavior.Restrict);
+            r.HasOne<Product>().WithMany(p => p.RecipeItems).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Cascade);
         });
 
         ApplyTenantQueryFilters(modelBuilder);
