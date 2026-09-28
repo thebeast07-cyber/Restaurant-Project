@@ -95,6 +95,16 @@ an authenticated request path.
   `RestaurantTable` instead of `Table` specifically to avoid confusion with SQL/EF
   terminology in code reviews.
 
+### Concurrency
+- "At most one open Shift per user" is enforced by a **partial unique index**
+  (`shifts (UserId) WHERE Status = 0`), not just the `AnyAsync` check in
+  `ShiftsController.Open`. The application-level check alone is check-then-insert and
+  race-prone; verified with 5 concurrent open-shift requests for the same user — the
+  DB constraint let exactly 1 through and the other 4 got a clean `409`, not a crash.
+  This is the pattern to follow for any other "at most one X" invariant going forward
+  (don't trust an `AnyAsync` check alone under concurrency — back it with a DB
+  constraint and catch `DbUpdateException` to turn the violation into a clean 4xx).
+
 ## Gotchas (bugs already hit — read before you hit them again)
 
 ### JWT `sub` claim silently disappears

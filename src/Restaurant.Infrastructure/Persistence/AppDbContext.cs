@@ -86,6 +86,13 @@ public class AppDbContext : DbContext
         {
             s.ToTable("shifts");
             s.HasIndex(x => new { x.TenantId, x.BranchId, x.UserId, x.Status });
+
+            // Enforces "at most one open shift per user" atomically at the DB level —
+            // the application-level check-then-insert in ShiftsController.Open is
+            // TOCTOU-vulnerable (two near-simultaneous requests could both pass the
+            // check). This partial unique index makes the race impossible instead of
+            // just unlikely. Status = 0 is ShiftStatus.Open.
+            s.HasIndex(x => x.UserId).IsUnique().HasFilter("\"Status\" = 0");
         });
 
         modelBuilder.Entity<Order>(o =>

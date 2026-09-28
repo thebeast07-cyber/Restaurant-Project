@@ -58,7 +58,20 @@ public class ShiftsController : ControllerBase
         };
 
         _db.Shifts.Add(shift);
-        await _db.SaveChangesAsync();
+
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            // Lost the race against another concurrent "open shift" request for the
+            // same user — the AnyAsync check above passed for both, but the partial
+            // unique index on (UserId WHERE Status = Open) only lets one through.
+            // Shift has no other unique constraint, so any DbUpdateException here can
+            // only be this one.
+            return Conflict(new { message = "This user already has an open shift." });
+        }
 
         return Ok(new ShiftResponse(shift.Id, shift.OpenedAt, shift.OpeningCash, shift.Status));
     }
