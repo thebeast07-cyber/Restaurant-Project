@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Restaurant.Domain.Catalog;
 using Restaurant.Domain.Identity;
 using Restaurant.Domain.Organization;
+using Restaurant.Domain.Sales;
 using Restaurant.Infrastructure.Persistence;
 
 namespace Restaurant.Api.Startup;
@@ -108,6 +109,17 @@ public static class DataSeeder
         ]);
 
         db.Products.AddRange(nasiGoreng, esTeh);
+
+        // Sample tables (placeholder — replace with the real floor plan before go-live).
+        for (var i = 1; i <= 8; i++)
+        {
+            db.Tables.Add(new RestaurantTable
+            {
+                TenantId = tenant.Id,
+                BranchId = branch.Id,
+                Number = i.ToString()
+            });
+        }
 
         await db.SaveChangesAsync();
     }

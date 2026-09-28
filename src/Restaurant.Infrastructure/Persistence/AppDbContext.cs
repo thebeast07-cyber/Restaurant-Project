@@ -4,6 +4,7 @@ using Restaurant.Domain.Catalog;
 using Restaurant.Domain.Common;
 using Restaurant.Domain.Identity;
 using Restaurant.Domain.Organization;
+using Restaurant.Domain.Sales;
 
 namespace Restaurant.Infrastructure.Persistence;
 
@@ -24,6 +25,10 @@ public class AppDbContext : DbContext
     public DbSet<Ingredient> Ingredients => Set<Ingredient>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<RecipeItem> RecipeItems => Set<RecipeItem>();
+    public DbSet<RestaurantTable> Tables => Set<RestaurantTable>();
+    public DbSet<Shift> Shifts => Set<Shift>();
+    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<OrderItem> OrderItems => Set<OrderItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -69,6 +74,34 @@ public class AppDbContext : DbContext
             r.HasIndex(x => x.ProductId);
             r.HasOne<Ingredient>().WithMany().HasForeignKey(x => x.IngredientId).OnDelete(DeleteBehavior.Restrict);
             r.HasOne<Product>().WithMany(p => p.RecipeItems).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<RestaurantTable>(t =>
+        {
+            t.ToTable("tables");
+            t.HasIndex(x => new { x.TenantId, x.BranchId, x.Number }).IsUnique();
+        });
+
+        modelBuilder.Entity<Shift>(s =>
+        {
+            s.ToTable("shifts");
+            s.HasIndex(x => new { x.TenantId, x.BranchId, x.UserId, x.Status });
+        });
+
+        modelBuilder.Entity<Order>(o =>
+        {
+            o.ToTable("orders");
+            o.HasIndex(x => new { x.TenantId, x.BranchId, x.Status });
+            o.HasOne<RestaurantTable>().WithMany().HasForeignKey(x => x.TableId).OnDelete(DeleteBehavior.Restrict);
+            o.HasOne<Shift>().WithMany().HasForeignKey(x => x.ShiftId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<OrderItem>(oi =>
+        {
+            oi.ToTable("order_items");
+            oi.HasIndex(x => x.OrderId);
+            oi.HasOne<Order>().WithMany(o => o.Items).HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Cascade);
+            oi.HasOne<Product>().WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
         });
 
         ApplyTenantQueryFilters(modelBuilder);

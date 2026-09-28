@@ -35,6 +35,9 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        // Keep claim types as-issued ("sub", "role", ...) instead of ASP.NET Core's
+        // default remap to long XML-schema URIs — simpler to read back consistently.
+        options.MapInboundClaims = false;
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
