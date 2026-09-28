@@ -5,7 +5,7 @@ namespace Restaurant.Api.Contracts;
 public record CategoryResponse(Guid Id, string Name);
 public record CreateCategoryRequest(string Name);
 
-public record IngredientResponse(Guid Id, string Name, string Unit);
+public record IngredientResponse(Guid Id, string Name, string Unit, decimal CurrentStock);
 public record CreateIngredientRequest(string Name, string Unit);
 
 public record RecipeItemRequest(Guid IngredientId, decimal Quantity, string Unit);

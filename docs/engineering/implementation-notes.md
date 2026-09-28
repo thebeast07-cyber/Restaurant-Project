@@ -14,7 +14,7 @@ way — for whoever joins this codebase next (including future-us).
 
 ## Current State
 
-Sprint day: **9 / 14** (see technical design doc for the full day-by-day plan).
+Sprint day: **10 / 14** (see technical design doc for the full day-by-day plan).
 **Walking skeleton milestone reached** (Day 4): Order → Checkout → Inventory deducted
 via Recipe → balanced Finance journal posted, all in one atomic transaction. Verified
 down to raw SQL, not just API responses. **Day 5**: stress-tested the concurrent paths
@@ -29,9 +29,9 @@ Done: Identity/Auth, multi-tenant isolation, Catalog + Recipe, Table/Shift/Order
 Payment (Cash + QRIS-manual), Inventory deduction, Finance journal (background, no UI),
 station ticket routing/formatting (content only — no physical printer wired yet,
 pending hardware confirmation), full table occupancy lifecycle (Available <-> Occupied,
-concurrency-safe), Void (PIN-gated, reverses stock + journal, releases table, audited).
-Not started: physical printer integration, Stock adjustment/opname, Shift close,
-Reporting, any UI.
+concurrency-safe), Void (PIN-gated, reverses stock + journal, releases table, audited),
+Stock adjustment/opname (Owner/Manager, writes StockMovement + AuditLog).
+Not started: physical printer integration, Shift close, Reporting, any UI.
 
 ## Running Locally
 
@@ -214,7 +214,40 @@ alongside this one, not a rewrite of it.
   succeeds) — built the atomic claim in from the start again, consistent with Day 8;
   passed on the first run.
 
-### Concurrency
+#### Stock Adjustment / Opname (Day 10)
+- New endpoint `POST /api/ingredients/{id}/stock-adjustment`, restricted to
+  `Owner,Manager` — there's no separate `Warehouse` role in the MVP's fixed 3-role
+  enum (discovery/04 assigns opname to "Warehouse Staff", but that role doesn't exist
+  in code; Owner/Manager cover it here).
+- Request carries **either** `CountedQuantity` (Opname — the physically counted
+  absolute value; the API computes the delta against current `Stock.Quantity`) **or**
+  `DeltaQuantity` (ManualAdjustment — a known +/- correction, e.g. spoilage or an
+  under-logged delivery), never both — which one is set decides the
+  `StockMovementReason` written, so the reason isn't a separate field a caller could
+  get out of sync with the actual quantities.
+- If no `Stock` row exists yet for the Ingredient (possible — `IngredientsController.Create`
+  doesn't create one; only seed data does), it's created on the fly starting at 0
+  rather than treated as an error, so Opname can also be used to establish the very
+  first count for a newly-added ingredient.
+- Guards: rejects a no-op (`changeQuantity == 0`) and rejects anything that would
+  drive `Quantity` negative — same invariant Checkout's stock deduction enforces.
+- Writes a `StockMovement` (`ReferenceType = "Ingredient"`, `ReferenceId` = the
+  ingredient) and an `AuditLog` (`Action = StockAdjustment`, before/after quantity,
+  caller-supplied `Reason`) in the same transaction — same who/when/what/before-after
+  shape as Void's audit row (PRD §12).
+- **Deliberately not using the atomic `ExecuteUpdateAsync`-with-WHERE pattern** used
+  everywhere else in this codebase for stock mutations (Checkout, Void). This is a
+  conscious exception, not an oversight: Opname/ManualAdjustment is an infrequent,
+  single-operator admin action (one warehouse staffer physically counting at a time),
+  not a hot concurrent path like checkout — read-then-write here doesn't have the
+  same "20 concurrent requests overselling 5 units" failure mode Day 5 found. If
+  multi-user concurrent stock adjustment ever becomes a real scenario, apply the same
+  conditional-`ExecuteUpdateAsync` fix documented in Concurrency below.
+- `GET /api/ingredients` now also returns `CurrentStock` per ingredient (left-joined
+  against `Stock`, `0` if no row exists) — needed so a future opname screen can
+  prefill "system says X" before staff key in the physical count.
+
+## Concurrency
 - "At most one open Shift per user" is enforced by a **partial unique index**
   (`shifts (UserId) WHERE Status = 0`), not just the `AnyAsync` check in
   `ShiftsController.Open`. The application-level check alone is check-then-insert and
