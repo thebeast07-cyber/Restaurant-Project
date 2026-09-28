@@ -4,8 +4,11 @@ using Microsoft.EntityFrameworkCore;
 using Restaurant.Api.Auth;
 using Restaurant.Api.Contracts;
 using Restaurant.Domain.Common;
+using Restaurant.Domain.Finance;
+using Restaurant.Domain.Inventory;
 using Restaurant.Domain.Sales;
 using Restaurant.Infrastructure.Persistence;
+using DomainPayment = Restaurant.Domain.Payment;
 
 namespace Restaurant.Api.Controllers;
 
@@ -107,6 +110,139 @@ public class OrdersController : ControllerBase
         await _db.SaveChangesAsync();
 
         return Ok(await BuildOrderResponse(order.Id));
+    }
+
+    /// <summary>
+    /// The OrderPaid event, implemented as a single in-process transaction rather than
+    /// a message/broker (see docs/architecture/01-mvp-technical-design.md §2 — no
+    /// outbox/broker needed at this scale, but the "who consumes what" contract there
+    /// still applies): deduct Inventory via Recipe, post a balanced Finance journal,
+    /// and complete the Order — all in one SaveChangesAsync so it's atomic. Either all
+    /// three happen or none do; there is no state where payment is recorded but stock
+    /// or the journal silently didn't move.
+    /// </summary>
+    [HttpPost("{orderId:guid}/checkout")]
+    public async Task<ActionResult<CheckoutResponse>> Checkout(Guid orderId, CheckoutRequest request)
+    {
+        var order = await _db.Orders.Include(o => o.Items).SingleOrDefaultAsync(o => o.Id == orderId);
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        if (order.Status is not (OrderStatus.Draft or OrderStatus.Open))
+        {
+            return BadRequest(new { message = $"Cannot checkout an order in status {order.Status}." });
+        }
+
+        if (order.Items.Count == 0)
+        {
+            return BadRequest(new { message = "Cannot checkout an order with no items." });
+        }
+
+        var paymentMethod = await _db.PaymentMethods.SingleOrDefaultAsync(pm => pm.Code == request.PaymentMethod);
+        if (paymentMethod is null)
+        {
+            return BadRequest(new { message = $"Payment method {request.PaymentMethod} is not configured." });
+        }
+
+        // --- 1. Compute Ingredient requirements from Recipe, aggregated across items ---
+        var productIds = order.Items.Select(i => i.ProductId).Distinct().ToList();
+        var recipeItems = await _db.RecipeItems.Where(r => productIds.Contains(r.ProductId)).ToListAsync();
+        var quantityByProduct = order.Items.ToDictionary(i => i.ProductId, i => i.Quantity);
+
+        var requiredByIngredient = new Dictionary<Guid, decimal>();
+        foreach (var recipeItem in recipeItems)
+        {
+            var orderedQuantity = quantityByProduct[recipeItem.ProductId];
+            var required = recipeItem.Quantity * orderedQuantity;
+            requiredByIngredient[recipeItem.IngredientId] =
+                requiredByIngredient.GetValueOrDefault(recipeItem.IngredientId) + required;
+        }
+
+        // --- 2. Validate stock is sufficient BEFORE mutating anything ---
+        var ingredientIds = requiredByIngredient.Keys.ToList();
+        var stocks = await _db.Stocks.Where(s => ingredientIds.Contains(s.IngredientId)).ToListAsync();
+        var stockByIngredient = stocks.ToDictionary(s => s.IngredientId);
+
+        var shortages = requiredByIngredient
+            .Where(kv => !stockByIngredient.TryGetValue(kv.Key, out var stock) || stock.Quantity < kv.Value)
+            .Select(kv => new
+            {
+                IngredientId = kv.Key,
+                Required = kv.Value,
+                Available = stockByIngredient.TryGetValue(kv.Key, out var s) ? s.Quantity : 0m
+            })
+            .ToList();
+
+        if (shortages.Count > 0)
+        {
+            return BadRequest(new { message = "Insufficient stock.", shortages });
+        }
+
+        // --- 3. Deduct stock + write audit trail (StockMovement) ---
+        var userId = User.GetUserId();
+        foreach (var (ingredientId, requiredQuantity) in requiredByIngredient)
+        {
+            var stock = stockByIngredient[ingredientId];
+            stock.Quantity -= requiredQuantity;
+
+            _db.StockMovements.Add(new StockMovement
+            {
+                TenantId = _tenant.TenantId!.Value,
+                BranchId = _tenant.BranchId!.Value,
+                IngredientId = ingredientId,
+                ChangeQuantity = -requiredQuantity,
+                Reason = StockMovementReason.Sale,
+                ReferenceType = "Order",
+                ReferenceId = order.Id,
+                CreatedByUserId = userId
+            });
+        }
+
+        // --- 4. Record payment ---
+        var payment = new DomainPayment.Payment
+        {
+            TenantId = _tenant.TenantId!.Value,
+            OrderId = order.Id,
+            PaymentMethodId = paymentMethod.Id,
+            Amount = order.TotalAmount,
+            Status = DomainPayment.PaymentStatus.Confirmed,
+            ConfirmedByUserId = userId,
+            ConfirmedAt = DateTimeOffset.UtcNow
+        };
+        _db.Payments.Add(payment);
+
+        // --- 5. Post balanced journal entry (Debit Cash/Bank, Credit Revenue) ---
+        // NOTE: no COGS/InventoryAsset lines yet — that requires a per-Ingredient unit
+        // cost, which isn't modeled in the MVP (see implementation-notes.md). This is a
+        // known, deliberate gap, not an oversight.
+        // Both Cash and (manual/static) QRIS settle to the same "Cash" account for the
+        // MVP — there's no separate bank/e-wallet clearing account yet since neither
+        // payment method goes through a real gateway. Revisit once QRIS has a real
+        // provider integration (fast-follow, see technical design doc §"Ditunda").
+        var cashAccount = await _db.Accounts.SingleAsync(a => a.Code == "1000");
+        var revenueAccount = await _db.Accounts.SingleAsync(a => a.Code == "4000");
+
+        var journalEntry = new JournalEntry
+        {
+            TenantId = _tenant.TenantId!.Value,
+            BranchId = _tenant.BranchId!.Value,
+            ReferenceType = "Order",
+            ReferenceId = order.Id
+        };
+        journalEntry.Lines.Add(new JournalLine { TenantId = _tenant.TenantId!.Value, JournalEntryId = journalEntry.Id, AccountId = cashAccount.Id, Debit = order.TotalAmount, Credit = 0 });
+        journalEntry.Lines.Add(new JournalLine { TenantId = _tenant.TenantId!.Value, JournalEntryId = journalEntry.Id, AccountId = revenueAccount.Id, Debit = 0, Credit = order.TotalAmount });
+        journalEntry.AssertBalanced();
+        _db.JournalEntries.Add(journalEntry);
+
+        // --- 6. Complete the order ---
+        order.Status = OrderStatus.Completed;
+
+        await _db.SaveChangesAsync();
+
+        var orderResponse = await BuildOrderResponse(order.Id);
+        return Ok(new CheckoutResponse(orderResponse!, payment.Id, payment.Amount, journalEntry.Id));
     }
 
     private async Task<OrderResponse?> BuildOrderResponse(Guid orderId)

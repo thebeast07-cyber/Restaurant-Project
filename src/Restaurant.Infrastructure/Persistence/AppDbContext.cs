@@ -2,8 +2,11 @@ using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Restaurant.Domain.Catalog;
 using Restaurant.Domain.Common;
+using Restaurant.Domain.Finance;
 using Restaurant.Domain.Identity;
+using Restaurant.Domain.Inventory;
 using Restaurant.Domain.Organization;
+using Restaurant.Domain.Payment;
 using Restaurant.Domain.Sales;
 
 namespace Restaurant.Infrastructure.Persistence;
@@ -29,6 +32,13 @@ public class AppDbContext : DbContext
     public DbSet<Shift> Shifts => Set<Shift>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+    public DbSet<Stock> Stocks => Set<Stock>();
+    public DbSet<StockMovement> StockMovements => Set<StockMovement>();
+    public DbSet<Account> Accounts => Set<Account>();
+    public DbSet<JournalEntry> JournalEntries => Set<JournalEntry>();
+    public DbSet<JournalLine> JournalLines => Set<JournalLine>();
+    public DbSet<PaymentMethod> PaymentMethods => Set<PaymentMethod>();
+    public DbSet<Domain.Payment.Payment> Payments => Set<Domain.Payment.Payment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -109,6 +119,54 @@ public class AppDbContext : DbContext
             oi.HasIndex(x => x.OrderId);
             oi.HasOne<Order>().WithMany(o => o.Items).HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Cascade);
             oi.HasOne<Product>().WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Stock>(s =>
+        {
+            s.ToTable("stocks");
+            s.HasIndex(x => new { x.TenantId, x.BranchId, x.IngredientId }).IsUnique();
+            s.HasOne<Ingredient>().WithMany().HasForeignKey(x => x.IngredientId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<StockMovement>(sm =>
+        {
+            sm.ToTable("stock_movements");
+            sm.HasIndex(x => new { x.TenantId, x.BranchId, x.IngredientId });
+            sm.HasOne<Ingredient>().WithMany().HasForeignKey(x => x.IngredientId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Account>(a =>
+        {
+            a.ToTable("accounts");
+            a.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+        });
+
+        modelBuilder.Entity<JournalEntry>(je =>
+        {
+            je.ToTable("journal_entries");
+            je.HasIndex(x => new { x.TenantId, x.BranchId, x.ReferenceType, x.ReferenceId });
+            je.HasOne<JournalEntry>().WithMany().HasForeignKey(x => x.ReversalOfId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<JournalLine>(jl =>
+        {
+            jl.ToTable("journal_lines");
+            jl.HasOne<JournalEntry>().WithMany(je => je.Lines).HasForeignKey(x => x.JournalEntryId).OnDelete(DeleteBehavior.Cascade);
+            jl.HasOne<Account>().WithMany().HasForeignKey(x => x.AccountId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<PaymentMethod>(pm =>
+        {
+            pm.ToTable("payment_methods");
+            pm.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+        });
+
+        modelBuilder.Entity<Domain.Payment.Payment>(p =>
+        {
+            p.ToTable("payments");
+            p.HasIndex(x => x.OrderId);
+            p.HasOne<Order>().WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
+            p.HasOne<PaymentMethod>().WithMany().HasForeignKey(x => x.PaymentMethodId).OnDelete(DeleteBehavior.Restrict);
         });
 
         ApplyTenantQueryFilters(modelBuilder);

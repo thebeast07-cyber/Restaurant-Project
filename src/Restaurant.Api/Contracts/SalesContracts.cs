@@ -1,4 +1,5 @@
 using Restaurant.Domain.Catalog;
+using Restaurant.Domain.Payment;
 using Restaurant.Domain.Sales;
 
 namespace Restaurant.Api.Contracts;
@@ -21,3 +22,7 @@ public record OrderResponse(
     OrderStatus Status,
     decimal TotalAmount,
     List<OrderItemResponse> Items);
+
+public record CheckoutRequest(PaymentMethodCode PaymentMethod);
+
+public record CheckoutResponse(OrderResponse Order, Guid PaymentId, decimal AmountPaid, Guid JournalEntryId);

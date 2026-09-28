@@ -1,7 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Restaurant.Domain.Catalog;
+using Restaurant.Domain.Finance;
 using Restaurant.Domain.Identity;
+using Restaurant.Domain.Inventory;
 using Restaurant.Domain.Organization;
+using Restaurant.Domain.Payment;
 using Restaurant.Domain.Sales;
 using Restaurant.Infrastructure.Persistence;
 
@@ -110,6 +113,15 @@ public static class DataSeeder
 
         db.Products.AddRange(nasiGoreng, esTeh);
 
+        // Initial stock so checkout has something real to deduct from. Placeholder
+        // quantities — replace with the actual opening stock count before go-live.
+        db.Stocks.AddRange(
+            new Stock { TenantId = tenant.Id, BranchId = branch.Id, IngredientId = beras.Id, Quantity = 5000 },
+            new Stock { TenantId = tenant.Id, BranchId = branch.Id, IngredientId = telur.Id, Quantity = 100 },
+            new Stock { TenantId = tenant.Id, BranchId = branch.Id, IngredientId = ayam.Id, Quantity = 3000 },
+            new Stock { TenantId = tenant.Id, BranchId = branch.Id, IngredientId = tehCelup.Id, Quantity = 50 },
+            new Stock { TenantId = tenant.Id, BranchId = branch.Id, IngredientId = esBatu.Id, Quantity = 10000 });
+
         // Sample tables (placeholder — replace with the real floor plan before go-live).
         for (var i = 1; i <= 8; i++)
         {
@@ -120,6 +132,20 @@ public static class DataSeeder
                 Number = i.ToString()
             });
         }
+
+        // Chart of Accounts — minimal set for the MVP journal (docs/architecture/
+        // 01-mvp-technical-design.md section 1.8). No COGS/InventoryAsset postings
+        // yet — that needs a per-Ingredient cost, which isn't modeled in the MVP
+        // (see implementation-notes.md). Cash/Revenue only for now.
+        var cash = new Account { TenantId = tenant.Id, Code = "1000", Name = "Cash", Type = AccountType.Asset };
+        var revenue = new Account { TenantId = tenant.Id, Code = "4000", Name = "Revenue", Type = AccountType.Revenue };
+        var inventoryAsset = new Account { TenantId = tenant.Id, Code = "1100", Name = "Inventory Asset", Type = AccountType.Asset };
+        var cogs = new Account { TenantId = tenant.Id, Code = "5000", Name = "Cost of Goods Sold", Type = AccountType.Expense };
+        db.Accounts.AddRange(cash, revenue, inventoryAsset, cogs);
+
+        db.PaymentMethods.AddRange(
+            new PaymentMethod { TenantId = tenant.Id, Code = PaymentMethodCode.Cash, Name = "Cash" },
+            new PaymentMethod { TenantId = tenant.Id, Code = PaymentMethodCode.Qris, Name = "QRIS" });
 
         await db.SaveChangesAsync();
     }

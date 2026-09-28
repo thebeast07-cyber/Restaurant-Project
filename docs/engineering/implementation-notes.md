@@ -14,11 +14,19 @@ way — for whoever joins this codebase next (including future-us).
 
 ## Current State
 
-Sprint day: **3 / 14** (see technical design doc for the full day-by-day plan).
+Sprint day: **4 / 14** (see technical design doc for the full day-by-day plan).
+**Walking skeleton milestone reached**: Order → Checkout (Cash) → Inventory
+deducted via Recipe → balanced Finance journal posted, all in one atomic transaction.
+Verified down to raw SQL (stock_movements, journal_lines), not just API responses.
 
-Done: Identity/Auth, multi-tenant isolation, Catalog + Recipe, Table/Shift/Order (cart).
-Not started: Payment, Inventory deduction, Finance journal, Void, Station ticket
-printing, Reporting.
+**Explicit decision after Day 3**: backend-first. Everything built so far is API-only,
+tested via `curl` — no frontend exists yet. UI is a deliberately separate block of
+work, not interleaved per day as the original sprint table implied.
+
+Done: Identity/Auth, multi-tenant isolation, Catalog + Recipe, Table/Shift/Order (cart),
+Payment (Cash only), Inventory deduction, Finance journal (background, no UI).
+Not started: QRIS, Void, Station ticket printing, Table occupancy locking, Shift close,
+Reporting, any UI.
 
 ## Running Locally
 
@@ -94,6 +102,33 @@ an authenticated request path.
 - `RestaurantTable` is a full table (not shared with anything SQL-related); named
   `RestaurantTable` instead of `Table` specifically to avoid confusion with SQL/EF
   terminology in code reviews.
+- `Order.Status` goes straight from `Draft`/`Open` to `Completed` on successful
+  checkout — there's no separately-persisted `Paid` state even though the enum has
+  one. The design doc's flow sketch describes Paid → Completed as two steps, but
+  nothing in the MVP scope differentiates them (no "mark as served" action exists),
+  so persisting both would just be dead state. Revisit if that changes.
+
+### Payment / Inventory / Finance (Day 4 — walking skeleton)
+- `OrdersController.Checkout` is the `OrderPaid` event handler, implemented as a
+  single in-process method (not a message/broker) that does everything in one
+  `SaveChangesAsync`: validate → deduct stock via Recipe → post journal → complete
+  order. Atomic by construction (one unit of work), not by wrapping multiple calls in
+  an explicit transaction.
+- Stock check happens **before** any mutation (compute required-per-Ingredient first,
+  compare against `Stock.Quantity`, reject with a full shortage list if anything's
+  short). Verified: an over-quantity order that would drain multiple ingredients at
+  once gets rejected with zero partial deduction — checked at the DB, not just via the
+  API response.
+- Journal posts a simple Cash/Revenue pair only — **no COGS/InventoryAsset lines**.
+  That needs a per-Ingredient unit cost, which isn't modeled yet (`Ingredient` has no
+  cost field). This is a known, deliberate gap, not an oversight — flagged again here
+  so it doesn't get silently assumed "done" later.
+- Cash and QRIS (once built) both post to the same `"1000" Cash` account for now —
+  there's no separate bank/e-wallet clearing account because neither goes through a
+  real payment gateway yet.
+- Enums are serialized as strings in JSON now (`"Cash"`, `"Kitchen"`, `"Completed"`),
+  not raw ints — added `JsonStringEnumConverter` globally in `Program.cs` while
+  building this. Applies retroactively to every endpoint, not just Payment/Checkout.
 
 ### Concurrency
 - "At most one open Shift per user" is enforced by a **partial unique index**
