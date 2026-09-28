@@ -14,18 +14,20 @@ way — for whoever joins this codebase next (including future-us).
 
 ## Current State
 
-Sprint day: **4 / 14** (see technical design doc for the full day-by-day plan).
-**Walking skeleton milestone reached**: Order → Checkout (Cash) → Inventory
-deducted via Recipe → balanced Finance journal posted, all in one atomic transaction.
-Verified down to raw SQL (stock_movements, journal_lines), not just API responses.
+Sprint day: **6 / 14** (see technical design doc for the full day-by-day plan).
+**Walking skeleton milestone reached** (Day 4): Order → Checkout → Inventory deducted
+via Recipe → balanced Finance journal posted, all in one atomic transaction. Verified
+down to raw SQL, not just API responses. **Day 5**: stress-tested the concurrent paths
+and found + fixed 2 real race conditions (see Concurrency section below) — this is the
+part of the codebase with the most scrutiny so far.
 
 **Explicit decision after Day 3**: backend-first. Everything built so far is API-only,
-tested via `curl` — no frontend exists yet. UI is a deliberately separate block of
-work, not interleaved per day as the original sprint table implied.
+tested via `curl`/integration tests — no frontend exists yet. UI is a deliberately
+separate block of work, not interleaved per day as the original sprint table implied.
 
 Done: Identity/Auth, multi-tenant isolation, Catalog + Recipe, Table/Shift/Order (cart),
-Payment (Cash only), Inventory deduction, Finance journal (background, no UI).
-Not started: QRIS, Void, Station ticket printing, Table occupancy locking, Shift close,
+Payment (Cash + QRIS-manual), Inventory deduction, Finance journal (background, no UI).
+Not started: Void, Station ticket printing, Table occupancy locking, Shift close,
 Reporting, any UI.
 
 ## Running Locally
@@ -119,12 +121,27 @@ an authenticated request path.
   That needs a per-Ingredient unit cost, which isn't modeled yet (`Ingredient` has no
   cost field). This is a known, deliberate gap, not an oversight — flagged again here
   so it doesn't get silently assumed "done" later.
-- Cash and QRIS (once built) both post to the same `"1000" Cash` account for now —
-  there's no separate bank/e-wallet clearing account because neither goes through a
-  real payment gateway yet.
+- Cash and QRIS both post to the same `"1000" Cash` account for now — there's no
+  separate bank/e-wallet clearing account because neither goes through a real payment
+  gateway yet.
 - Enums are serialized as strings in JSON now (`"Cash"`, `"Kitchen"`, `"Completed"`),
   not raw ints — added `JsonStringEnumConverter` globally in `Program.cs` while
   building this. Applies retroactively to every endpoint, not just Payment/Checkout.
+
+### QRIS (Day 6)
+Required **zero code changes**. `Checkout` already took a generic `PaymentMethodCode`
+and looked up the matching seeded `PaymentMethod` row — QRIS was already in that enum
+and seeded from Day 4, just unverified until now. Tested end-to-end (`paymentMethod:
+"Qris"`) and confirmed correct in the DB (payment row, balanced journal).
+
+This matches the "QRIS statis, tanpa gateway" decision made earlier: the QR code
+itself is a physical/pre-existing asset the merchant already owns, not something the
+system generates per-transaction — so there's no "initiate payment, wait for webhook,
+then confirm" flow to build. The cashier shows the static QR, verifies payment
+happened by eye, then presses what is mechanically the same "Checkout" action as Cash.
+If/when a real QRIS gateway integration replaces this (fast-follow, needs a vendor
+decision — see PRD §24), that's an *additive* change: a new async confirmation path
+alongside this one, not a rewrite of it.
 
 ### Concurrency
 - "At most one open Shift per user" is enforced by a **partial unique index**
