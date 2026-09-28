@@ -14,7 +14,7 @@ way — for whoever joins this codebase next (including future-us).
 
 ## Current State
 
-Sprint day: **10 / 14** (see technical design doc for the full day-by-day plan).
+Sprint day: **11 / 14** (see technical design doc for the full day-by-day plan).
 **Walking skeleton milestone reached** (Day 4): Order → Checkout → Inventory deducted
 via Recipe → balanced Finance journal posted, all in one atomic transaction. Verified
 down to raw SQL, not just API responses. **Day 5**: stress-tested the concurrent paths
@@ -30,8 +30,9 @@ Payment (Cash + QRIS-manual), Inventory deduction, Finance journal (background, 
 station ticket routing/formatting (content only — no physical printer wired yet,
 pending hardware confirmation), full table occupancy lifecycle (Available <-> Occupied,
 concurrency-safe), Void (PIN-gated, reverses stock + journal, releases table, audited),
-Stock adjustment/opname (Owner/Manager, writes StockMovement + AuditLog).
-Not started: physical printer integration, Shift close, Reporting, any UI.
+Stock adjustment/opname (Owner/Manager, writes StockMovement + AuditLog),
+Shift close with cash reconciliation.
+Not started: physical printer integration, Reporting, any UI.
 
 ## Running Locally
 
@@ -214,7 +215,7 @@ alongside this one, not a rewrite of it.
   succeeds) — built the atomic claim in from the start again, consistent with Day 8;
   passed on the first run.
 
-#### Stock Adjustment / Opname (Day 10)
+### Stock Adjustment / Opname (Day 10)
 - New endpoint `POST /api/ingredients/{id}/stock-adjustment`, restricted to
   `Owner,Manager` — there's no separate `Warehouse` role in the MVP's fixed 3-role
   enum (discovery/04 assigns opname to "Warehouse Staff", but that role doesn't exist
@@ -261,6 +262,36 @@ alongside this one, not a rewrite of it.
 - `GET /api/ingredients` now also returns `CurrentStock` per ingredient (left-joined
   against `Stock`, `0` if no row exists) — needed so a future opname screen can
   prefill "system says X" before staff key in the physical count.
+
+### Shift Close & Cash Reconciliation (Day 11)
+- New endpoint `POST /api/shifts/{id}/close`: only the shift's own owner may close it
+  (`shift.UserId != caller → 403`) — matches the permission matrix (discovery/04:
+  Cashier has "Execute" on Open/Close Shift, Manager/Owner only "Audit"/"View", so
+  they can't close someone else's shift through this endpoint).
+- Reconciliation aggregates `Payment` rows for the shift's Orders, filtered to
+  `Order.Status == Completed` and `Payment.Status == Confirmed`, split by
+  `PaymentMethod.Code` into `CashSalesTotal` vs `NonCashSalesTotal`. Filtering on
+  **Order** status (not touching `Payment` at all) is what excludes a voided sale's
+  cash from the drawer count — Void (Day 9) never edits or deletes the original
+  `Payment` row, it only flips `Order.Status` to `Voided` and posts a reversal
+  journal, so `Payment` alone can't tell completed from voided.
+  `ExpectedCash = OpeningCash + CashSalesTotal`; `CashVariance = ClosingCash -
+  ExpectedCash` is returned so the cashier/manager immediately sees over/short
+  without a separate reconciliation step. Verified manually end-to-end: seeded
+  Cash + QRIS checkouts plus one Void, confirmed the returned `cashSalesTotal` /
+  `nonCashSalesTotal` matched a direct SQL aggregate over `payments`/`orders`
+  (voided order's cash correctly excluded).
+- The atomic claim (`Status == Open → Closed`, checking rows-affected) is the same
+  guarded-transition pattern as every other status change in this codebase — two
+  concurrent close requests on one shift must not both report success.
+- No new `AuditLog` entry for shift close — PRD §12 / discovery/10's explicit list of
+  audited actions is Void, Refund, Stock Adjustment, Journal Edit; shift close isn't
+  on it, and the closed `Shift` row itself already records who/when/opening/closing.
+- Closing a shift has no explicit interaction needed with `OrdersController.Create`:
+  that endpoint already looks up `Status == Open` to find the caller's shift, so once
+  a shift is `Closed` it simply stops being found — no separate "is my shift closed"
+  check was needed. Verified: creating an order right after closing returns the
+  existing "Open a shift before creating an order" `400`, unchanged from Day 3.
 
 ## Concurrency
 - "At most one open Shift per user" is enforced by a **partial unique index**
@@ -358,5 +389,21 @@ needed; use the explicit `DbSet.Add()` and let fixup handle the navigation.
 See `docs/architecture/01-mvp-technical-design.md` §"Scope Recap" for the full list.
 Two worth calling out here because they're partial/coupled to what's built:
 - Login-by-username-only breaks with a second Tenant (see Identity notes above).
-- `Shift` close/reconciliation UI doesn't exist — a shift can be opened but never
-  closed yet.
+- `Shift` close now exists (Day 11) but there's still no UI for it — API only.
+- **Test-class isolation**: `TestWebApplicationFactory` runs every test class against
+  the same live dev Postgres (already flagged in that file as a fast-follow), and
+  xUnit runs different test classes in parallel by default. Confirmed while verifying
+  Day 11: running the full suite normally intermittently fails a *different*
+  concurrency-heavy test each time (`StockRaceConditionTests`, `CheckoutLoadTests`,
+  `TableClaimRaceTests`) with a `500` from two test classes' `EnsureShiftOpenAsync`/
+  table-claim logic genuinely colliding on the same seeded `cashier` account and
+  Tables — this reproduces identically on commits before Day 11 too, so it's
+  pre-existing, not a regression. Running with test-collection parallelization off
+  (`dotnet test -- xUnit.ParallelizeTestCollections=false`) passes 7/7 reliably.
+  Also: resetting the dev DB (`docker compose down -v`) right before running the full
+  suite can trigger a *second*, sharper failure — multiple test classes' parallel
+  `WebApplicationFactory` startups race `DataSeeder`'s check-then-insert seed guard on
+  a truly empty DB, seeding several `Tenant` rows instead of one (seen: 6). Seeding
+  once via a single `dotnet run` before running tests avoids it. Proper fix is
+  disabling xUnit collection parallelization for this assembly (or giving each test
+  class its own tenant/user), not done yet.

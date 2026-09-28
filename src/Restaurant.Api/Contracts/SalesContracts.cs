@@ -10,6 +10,20 @@ public record TableResponse(Guid Id, string Number, TableStatus Status);
 public record OpenShiftRequest(decimal OpeningCash);
 public record ShiftResponse(Guid Id, DateTimeOffset OpenedAt, decimal OpeningCash, ShiftStatus Status);
 
+public record CloseShiftRequest(decimal ClosingCash);
+
+public record ShiftCloseResponse(
+    Guid Id,
+    DateTimeOffset OpenedAt,
+    DateTimeOffset ClosedAt,
+    decimal OpeningCash,
+    decimal CashSalesTotal,
+    decimal NonCashSalesTotal,
+    decimal ExpectedCash,
+    decimal ClosingCash,
+    decimal CashVariance,
+    ShiftStatus Status);
+
 public record CreateOrderRequest(Guid? TableId);
 
 public record AddOrderItemRequest(Guid ProductId, int Quantity);
