@@ -94,6 +94,34 @@ Not started, not urgent, each gated on an external decision:
 - **Real payment gateway** (bank/e-wallet, replacing QRIS-manual) — vendor TBD
   (PRD §14). See the "jembatan bank/e-wallet" discussion in project history:
   additive when it happens, not a rewrite, so no rush.
+
+  **Hosting decision (§3 above: one office computer on the restaurant's LAN,
+  never exposed to the internet) means the server can't directly receive a
+  webhook** — a webhook is the bank/e-wallet *initiating* a connection to us,
+  which needs a reachable public address. This does not conflict with the LAN
+  hosting choice and does not require re-architecting it; it needs one small
+  **additive** infrastructure piece when this phase actually starts:
+
+  ```
+  [Bank / E-wallet]
+         |  sends payment notification
+         v
+  [Cloud "mailbox" — the only thing with a public address]
+         |  relayed over a tunnel that OUR server opens outbound
+         |  (e.g. Cloudflare Tunnel) — the restaurant's router never
+         |  needs an inbound port opened, so the LAN's security
+         |  posture from §3 doesn't change
+         v
+  [POS server — stays exactly where it is, on the restaurant LAN]
+  ```
+
+  Application-side, this needs exactly one new endpoint
+  (`POST /api/payments/webhook/{provider}`) that verifies the request is
+  genuinely from the provider (signature check) and then reuses the existing
+  `Payment.Status: Pending → Confirmed` transition — the same state machine
+  already sitting unused since Day 4, because Cash/QRIS-manual currently skip
+  straight to `Confirmed`. No existing controller, table, or journal-posting
+  logic needs to change; Order/Stock/Journal handling is untouched.
 - **Formal Refund flow** (post-settlement credit, distinct from same-day Void) —
   explicitly out of MVP scope from the start (PRD §11), revisit if the business
   actually needs post-settlement refunds.
