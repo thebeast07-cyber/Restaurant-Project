@@ -1,0 +1,44 @@
+using Restaurant.Domain.Catalog;
+using Restaurant.Domain.Common;
+
+namespace Restaurant.Domain.Sales;
+
+public enum OrderStatus
+{
+    Draft,
+    Open,
+    PendingPayment,
+    Paid,
+    Completed,
+    Voided
+}
+
+public class Order : Entity, IBranchScoped
+{
+    public required Guid TenantId { get; set; }
+    public required Guid BranchId { get; set; }
+    public Guid? TableId { get; set; }
+    public required Guid ShiftId { get; set; }
+    public OrderStatus Status { get; set; } = OrderStatus.Draft;
+    public decimal TotalAmount { get; set; }
+
+    public List<OrderItem> Items { get; set; } = [];
+
+    public void RecalculateTotal()
+    {
+        TotalAmount = Items.Sum(i => i.Subtotal);
+    }
+}
+
+public class OrderItem : Entity, ITenantScoped
+{
+    public required Guid TenantId { get; set; }
+    public required Guid OrderId { get; set; }
+    public required Guid ProductId { get; set; }
+    public required int Quantity { get; set; }
+    public required decimal UnitPrice { get; set; }
+    public required decimal Subtotal { get; set; }
+
+    /// <summary>Denormalized from Product at add-time so ticket routing survives later menu edits.</summary>
+    public required Station Station { get; set; }
+}
