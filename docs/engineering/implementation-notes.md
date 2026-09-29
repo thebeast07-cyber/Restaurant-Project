@@ -26,9 +26,12 @@ down to raw SQL, not just API responses. **Day 5**: stress-tested the concurrent
 and found + fixed 2 real race conditions (see Concurrency section below) — this is the
 part of the codebase with the most scrutiny so far.
 
-**Explicit decision after Day 3**: backend-first. Everything built so far is API-only,
-tested via `curl`/integration tests — no frontend exists yet. UI is a deliberately
-separate block of work, not interleaved per day as the original sprint table implied.
+**Explicit decision after Day 3**: backend-first. Everything built through the
+Purchasing extension was API-only, tested via `curl`/integration tests. That UI gap
+started closing right after: see
+[`docs/architecture/02-ui-roadmap.md`](../architecture/02-ui-roadmap.md) for the
+phase plan (`web/` — React + Vite, Day 1 of that roadmap landed: Login + a
+Dashboard placeholder, end-to-end against the real API).
 
 Done: Identity/Auth, multi-tenant isolation, Catalog + Recipe, Table/Shift/Order (cart),
 Payment (Cash + QRIS-manual), Inventory deduction, Finance journal (background, no UI),
@@ -522,6 +525,52 @@ be closed later but never actually were.
   **Known gap**: any `Waste`/`ManualAdjustment` movement recorded *before* this field
   existed has `UnitCostAtTime = null` and contributes `0` to this report — it won't
   retroactively backfill history.
+
+### Web UI — Day 1 (Login + Dashboard foundation)
+
+First slice of [`02-ui-roadmap.md`](../architecture/02-ui-roadmap.md)'s Phase 1.
+Platform/framework/hosting decisions were made explicitly before writing any
+frontend code (see roadmap §2): **web app, React + Vite, single office-LAN server**
+— not a native tablet app, not Blazor, not cloud hosting.
+
+- **`web/`**: a separate Vite + React + TypeScript project, not part of the .NET
+  solution — it's a pure API consumer, calling the existing REST endpoints exactly
+  like the `curl` commands used throughout this file, just from a browser instead.
+  `src/api/client.ts` is a thin `fetch` wrapper: attaches the JWT from
+  `localStorage`, and turns a non-2xx response into an `ApiError` carrying the
+  backend's own `{ message }` — every controller in this API already returns that
+  shape on error, so the UI never needs a second error-message convention.
+- **CORS** (`Program.cs`): added because the Vite dev server runs on a different
+  port (`5173`) than the API (`5291`) during development — the browser's
+  same-origin policy blocks the call without it. Configurable via
+  `Cors:AllowedOrigins` in config, defaulting to the Vite dev ports. **Not needed
+  in production** under the current hosting plan (UI served from the same
+  origin/server as the API, per the roadmap's hosting decision) — this is
+  dev-only plumbing, not a permanent cross-origin architecture.
+- **`AuthContext`**: stores the JWT + a minimal user object (name/role/tenantId/
+  branchId, taken directly from the login response — no separate `/api/me` round
+  trip needed) in `localStorage`, restored on page load so a refresh doesn't force
+  a re-login. `ProtectedRoute` redirects to `/login` when there's no user in
+  context; there's no token-expiry handling yet (a 401 from an expired token
+  during use isn't caught and redirected — flagged here, not fixed, since Day 1's
+  scope is Login itself).
+- **antislop** (`web/antislop.md`, `web/DESIGN.md`): adopted by explicit request
+  partway through Day 1 — a rules filter against generic/AI-shaped UI, copy, and
+  code (source: `github.com/miqdadbadjuber/anti-slop`), run in "during" mode
+  (applied while building, not audited after). `DESIGN.md` records the owner's
+  actual direction (transcribed, not invented): a modern/casual cafe, Chinese-
+  Indonesian fusion concept, "modern, clean, efficient" personality, no fixed
+  palette yet, typography delegated to the agent (a single clean sans-serif,
+  deliberately not a stereotyped "Asian-style" display font — see `DESIGN.md`'s
+  reasoning). Dial: `ENERGY 2 / RHYTHM 2 / MOTION 1`. Every UI screen going
+  forward should be built against this same file, updating it if the owner's
+  direction changes, rather than drifting on a per-screen basis.
+  Verified the Delivery Gate this file requires before shipping: real
+  login/logout/error-state behavior (not dead controls), keyboard focus visible,
+  WCAG AA contrast checked numerically (10:1+ in light mode, 6.9:1+ in dark), no
+  horizontal overflow at a 375px mobile width, both light and dark themes
+  rendered correctly (`prefers-color-scheme`, never forced) — all via an actual
+  browser session against the running dev servers, not just a build that compiled.
 
 ## Concurrency
 - "At most one open Shift per user" is enforced by a **partial unique index**

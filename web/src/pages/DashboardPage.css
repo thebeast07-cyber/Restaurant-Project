@@ -1,0 +1,38 @@
+.dashboard-page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.dashboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dashboard-header div {
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-role {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.dashboard-header button {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.dashboard-placeholder {
+  margin-top: 24px;
+  font-size: 14px;
+  color: var(--text);
+}

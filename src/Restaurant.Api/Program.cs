@@ -55,6 +55,24 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+// The web UI (Day 1 of the UI roadmap, docs/architecture/02-ui-roadmap.md) runs as
+// a separate Vite dev server during development (different port than the API), so
+// the browser's same-origin policy blocks calls without this. In production the
+// plan is to serve the built UI from this same server/origin (one office computer,
+// see the roadmap's hosting decision) — CORS becomes a non-issue then, this policy
+// only matters for local dev.
+const string WebUiCorsPolicy = "WebUiCorsPolicy";
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? ["http://localhost:5173", "http://127.0.0.1:5173"];
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(WebUiCorsPolicy, policy =>
+        policy.WithOrigins(allowedOrigins)
+            .AllowAnyHeader()
+            .AllowAnyMethod());
+});
+
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
@@ -71,6 +89,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+app.UseCors(WebUiCorsPolicy);
 
 app.UseAuthentication();
 app.UseAuthorization();
