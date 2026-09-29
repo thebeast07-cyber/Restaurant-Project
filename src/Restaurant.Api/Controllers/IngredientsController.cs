@@ -33,7 +33,7 @@ public class IngredientsController : ControllerBase
             .OrderBy(i => i.Name)
             .GroupJoin(_db.Stocks, i => i.Id, s => s.IngredientId, (i, stocks) => new { i, stocks })
             .SelectMany(x => x.stocks.DefaultIfEmpty(), (x, stock) =>
-                new IngredientResponse(x.i.Id, x.i.Name, x.i.Unit, stock == null ? 0 : stock.Quantity, x.i.MinimumStock))
+                new IngredientResponse(x.i.Id, x.i.Name, x.i.Unit, stock == null ? 0 : stock.Quantity, x.i.MinimumStock, x.i.AverageCost))
             .ToListAsync();
 
         return Ok(ingredients);
@@ -55,7 +55,7 @@ public class IngredientsController : ControllerBase
         _db.Ingredients.Add(ingredient);
         await _db.SaveChangesAsync();
 
-        return Ok(new IngredientResponse(ingredient.Id, ingredient.Name, ingredient.Unit, 0, ingredient.MinimumStock));
+        return Ok(new IngredientResponse(ingredient.Id, ingredient.Name, ingredient.Unit, 0, ingredient.MinimumStock, 0));
     }
 
     /// <summary>

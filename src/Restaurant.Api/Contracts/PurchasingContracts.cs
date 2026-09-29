@@ -33,5 +33,17 @@ public record PurchaseResponse(
     string SupplierName,
     Guid? PurchaseRequestId,
     decimal TotalAmount,
+    decimal AmountPaid,
+    decimal RemainingBalance,
+    PurchasePaymentStatus PaymentStatus,
     Guid JournalEntryId,
     List<PurchaseItemResponse> Items);
+
+public record RecordPurchasePaymentRequest(decimal Amount);
+
+public record PurchasePaymentResponse(
+    Guid PurchaseId,
+    decimal AmountPaid,
+    decimal RemainingBalance,
+    PurchasePaymentStatus PaymentStatus,
+    Guid JournalEntryId);

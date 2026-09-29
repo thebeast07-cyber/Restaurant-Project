@@ -320,10 +320,8 @@ public class OrdersController : ControllerBase
         };
         _db.Payments.Add(payment);
 
-        // --- 5. Post balanced journal entry (Debit Cash/Bank, Credit Revenue) ---
-        // NOTE: no COGS/InventoryAsset lines yet — that requires a per-Ingredient unit
-        // cost, which isn't modeled in the MVP (see implementation-notes.md). This is a
-        // known, deliberate gap, not an oversight.
+        // --- 5. Post balanced journal entry (Debit Cash/Bank, Credit Revenue, plus
+        // Debit COGS / Credit Inventory Asset for the ingredients actually consumed) ---
         // Both Cash and (manual/static) QRIS settle to the same "Cash" account for the
         // MVP — there's no separate bank/e-wallet clearing account yet since neither
         // payment method goes through a real gateway. Revisit once QRIS has a real
@@ -340,6 +338,29 @@ public class OrdersController : ControllerBase
         };
         journalEntry.Lines.Add(new JournalLine { TenantId = _tenant.TenantId!.Value, JournalEntryId = journalEntry.Id, AccountId = cashAccount.Id, Debit = order.TotalAmount, Credit = 0 });
         journalEntry.Lines.Add(new JournalLine { TenantId = _tenant.TenantId!.Value, JournalEntryId = journalEntry.Id, AccountId = revenueAccount.Id, Debit = 0, Credit = order.TotalAmount });
+
+        // COGS uses each Ingredient's current Weighted-Average cost (see Ingredient.cs
+        // and implementation-notes.md for why Weighted Average over FIFO). Read here,
+        // not atomically guarded against a concurrent Purchase updating the same
+        // Ingredient's AverageCost — a momentarily stale cost is a minor valuation
+        // inaccuracy, not an integrity violation like Stock.Quantity going negative,
+        // so this doesn't need the same compare-and-swap discipline as the stock
+        // deduction above. An Ingredient that has never gone through a Purchase has
+        // AverageCost = 0, so it contributes nothing to COGS — a known accuracy gap
+        // (not a crash), flagged in implementation-notes.md.
+        var averageCosts = await _db.Ingredients
+            .Where(i => requiredByIngredient.Keys.Contains(i.Id))
+            .ToDictionaryAsync(i => i.Id, i => i.AverageCost);
+        var totalCogs = deducted.Sum(d => d.Quantity * averageCosts.GetValueOrDefault(d.IngredientId, 0m));
+
+        if (totalCogs > 0)
+        {
+            var cogsAccount = await _db.Accounts.SingleAsync(a => a.Code == "5000");
+            var inventoryAssetAccount = await _db.Accounts.SingleAsync(a => a.Code == "1100");
+            journalEntry.Lines.Add(new JournalLine { TenantId = _tenant.TenantId!.Value, JournalEntryId = journalEntry.Id, AccountId = cogsAccount.Id, Debit = totalCogs, Credit = 0 });
+            journalEntry.Lines.Add(new JournalLine { TenantId = _tenant.TenantId!.Value, JournalEntryId = journalEntry.Id, AccountId = inventoryAssetAccount.Id, Debit = 0, Credit = totalCogs });
+        }
+
         journalEntry.AssertBalanced();
         _db.JournalEntries.Add(journalEntry);
 

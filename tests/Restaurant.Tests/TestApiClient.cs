@@ -79,6 +79,11 @@ public static class TestApiClient
         });
     }
 
+    public static async Task<HttpResponseMessage> RecordPurchasePaymentAsync(this HttpClient client, Guid purchaseId, decimal amount)
+    {
+        return await client.PostAsJsonAsync($"/api/purchases/{purchaseId}/payments", new { amount });
+    }
+
     private record LoginResponseDto(string Token);
     private record OrderDto(Guid Id);
 }

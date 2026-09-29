@@ -415,6 +415,73 @@ updates). `PurchaseRequest` Approve/Reject uses the same atomic
 `Pending → Approved/Rejected` claim pattern as every other single-transition status
 in this codebase.
 
+### COGS via Weighted-Average Costing, and Purchase Payments (immediate follow-up)
+
+Landed right after the Purchasing module above, closing two gaps found while
+reviewing "is the business flow actually complete" — not just "does the happy path
+work": Checkout never posted COGS, and a recorded Purchase's Accounts Payable could
+never actually be paid off. Also not in the original PRD, added by explicit
+agreement, same as Waste/low-stock threshold above.
+
+**Why Weighted Average instead of FIFO.** FIFO was raised as a possible management
+preference, but explicitly deferred after laying out the trade-off, for one concrete
+reason: FIFO requires tracking cost **per purchase batch** (which specific delivery's
+units are being consumed), which means Checkout's stock deduction — the single most
+heavily race-tested, most carefully hardened piece of code in this entire codebase
+(Day 5's atomic `ExecuteUpdateAsync`, re-verified in Day 13's last-unit test) — would
+need to walk multiple batch rows in oldest-first order instead of one atomic
+conditional `UPDATE` against a single `Stock` row. That's a materially harder
+concurrency problem (locking/consuming across an ordered set of rows atomically) on
+top of the part of the app with the least room for a mistake. Weighted Average needs
+only one new field (`Ingredient.AverageCost`) and touches Checkout as a **read only**
+— the stock deduction logic is completely unchanged. If FIFO turns out to be a hard
+requirement later, switching is additive: old Purchases simply have no batch data and
+are treated as pre-FIFO consumption under the old method; nothing needs to be
+rewritten or backfilled to make that transition, so starting simpler here carried no
+real lock-in risk.
+
+- **`Ingredient.AverageCost`** is recalculated on every `Purchase`:
+  `NewAverageCost = (QuantityBeforePurchase × AverageCost + PurchaseQuantity × UnitCost) / QuantityAfterPurchase`.
+  Implemented as a single raw-SQL `UPDATE ingredients ... FROM stocks ...`
+  (`PurchasesController.Create`), run **after** the Stock quantity increment in the
+  same transaction and same row lock — it reconstructs the pre-purchase quantity as
+  `(post-increment quantity − this item's quantity)` so it never needs a separate
+  "read quantity before" step a concurrent Purchase could race against. This is the
+  one place in the Purchasing module that couldn't just reuse
+  `ExecuteUpdateAsync`, since the formula spans two tables (`ingredients` and
+  `stocks`) and `ExecuteUpdateAsync` only targets one.
+  **Known accuracy artifact, not a bug**: pre-existing stock that was never bought
+  through a recorded `Purchase` (seed data, or anything only ever adjusted via
+  Opname) has `AverageCost = 0`. The *first* real Purchase for that Ingredient
+  dilutes the weighted average down using that phantom "free" stock — verified
+  directly: 5000g of seeded Beras (cost 0) + a 10000g purchase @ 10/g produced an
+  average of 6.67, not 10, exactly as the formula predicts. This self-corrects as
+  more real purchases layer on top (verified: a second purchase brought it to
+  exactly 10), but is worth knowing about when sanity-checking early numbers.
+- **Checkout** (`OrdersController.Checkout`) now reads each consumed Ingredient's
+  current `AverageCost`, computes `TotalCogs = Σ(quantity consumed × AverageCost)`,
+  and — only if `TotalCogs > 0` — adds `Debit COGS (5000) / Credit Inventory Asset
+  (1100)` lines to the **same** JournalEntry as the Cash/Revenue lines (not a second
+  entry), so Void's existing "swap every line's Debit/Credit" reversal logic
+  automatically reverses the COGS effect too, with no changes needed to Void.
+  This read is deliberately **not** guarded against a concurrent Purchase updating
+  the same Ingredient's `AverageCost` — a momentarily-stale cost is a minor valuation
+  inaccuracy, not an integrity violation like `Stock.Quantity` going negative, so it
+  doesn't need the compare-and-swap discipline the stock deduction itself uses.
+  Verified end-to-end: 1x product consuming 200g of an Ingredient with
+  `AverageCost = 10` posted exactly a 2000 COGS line, journal still balanced.
+- **`PurchasePayment`** (`POST /api/purchases/{id}/payments`): records one
+  installment against a Purchase's AP balance — **partial payment (cicilan) by
+  design**, per explicit requirement. `Purchase.AmountPaid`/`PaymentStatus`
+  (`Unpaid → PartiallyPaid → Paid`) are updated via the same atomic
+  conditional-`ExecuteUpdateAsync` pattern as everywhere else in this codebase:
+  `WHERE AmountPaid + Amount <= TotalAmount`, so an overpay attempt is rejected
+  atomically against the current committed balance, not a stale read — verified with
+  `PurchasePaymentRaceTests` (20 concurrent Rp10 payments against a Rp100 Purchase:
+  exactly 10 succeed, `AmountPaid` lands at exactly 100, never more). Posts
+  `Debit Accounts Payable / Credit Cash` — the mirror image of the original
+  Purchase's `Debit Inventory Asset / Credit Accounts Payable` lines.
+
 ## Concurrency
 - "At most one open Shift per user" is enforced by a **partial unique index**
   (`shifts (UserId) WHERE Status = 0`), not just the `AnyAsync` check in

@@ -2,6 +2,13 @@ using Restaurant.Domain.Common;
 
 namespace Restaurant.Domain.Purchasing;
 
+public enum PurchasePaymentStatus
+{
+    Unpaid,
+    PartiallyPaid,
+    Paid
+}
+
 /// <summary>
 /// The "Receiving" and "Invoice" halves of the PRD §11 Purchasing Flow, combined into
 /// one record for this MVP extension: recording a Purchase increments Stock AND posts
@@ -28,12 +35,37 @@ public class Purchase : Entity, IBranchScoped
     public required Guid RecordedByUserId { get; set; }
     public decimal TotalAmount { get; set; }
 
+    /// <summary>
+    /// Running total of PurchasePayment.Amount for this Purchase. Kept denormalized
+    /// (not just summed from PurchasePayments on read) so the "would this payment
+    /// overpay?" check in PurchasesController.RecordPayment can be a single atomic
+    /// conditional UPDATE — same discipline as every other shared-counter mutation in
+    /// this codebase.
+    /// </summary>
+    public decimal AmountPaid { get; set; }
+    public PurchasePaymentStatus PaymentStatus { get; set; } = PurchasePaymentStatus.Unpaid;
+
     public List<PurchaseItem> Items { get; set; } = [];
 
     public void RecalculateTotal()
     {
         TotalAmount = Items.Sum(i => i.Subtotal);
     }
+}
+
+/// <summary>
+/// One installment against a Purchase's Accounts Payable balance. Supports partial
+/// payment (cicilan) by design — a Purchase can take several of these before
+/// PaymentStatus reaches Paid. Append-only, like AuditLog: a correction is a new
+/// (possibly negative-amount reversal — not yet needed/built) row, not an edit.
+/// </summary>
+public class PurchasePayment : Entity, IBranchScoped
+{
+    public required Guid TenantId { get; set; }
+    public required Guid BranchId { get; set; }
+    public required Guid PurchaseId { get; set; }
+    public required decimal Amount { get; set; }
+    public required Guid PaidByUserId { get; set; }
 }
 
 public class PurchaseItem : Entity, ITenantScoped

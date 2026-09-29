@@ -92,6 +92,11 @@ public class PurchasesController : ControllerBase
             return BadRequest(new { message = "One or more IngredientId values are invalid." });
         }
 
+        if (request.Items.Any(i => i.Quantity <= 0 || i.UnitCost < 0))
+        {
+            return BadRequest(new { message = "Item Quantity must be positive and UnitCost cannot be negative." });
+        }
+
         var userId = User.GetUserId();
 
         var purchase = new Purchase
@@ -158,6 +163,21 @@ public class PurchasesController : ControllerBase
                 .Where(s => s.IngredientId == item.IngredientId)
                 .ExecuteUpdateAsync(setters => setters.SetProperty(s => s.Quantity, s => s.Quantity + item.Quantity));
 
+            // Weighted-average cost update — MUST run after the stock increment above,
+            // in the same transaction: the formula below reads stocks."Quantity" as the
+            // POST-increment value and reconstructs the pre-increment quantity as
+            // (post-increment - this item's quantity), so it never needs a separate
+            // "read quantity before" step that a concurrent Purchase could race with.
+            // Both statements touch the same Stock row inside one transaction, so
+            // Postgres' row lock from the first UPDATE covers this one too — no
+            // interleaving is possible. See implementation-notes.md for why this is
+            // Weighted Average rather than FIFO.
+            await _db.Database.ExecuteSqlInterpolatedAsync($@"
+                UPDATE ingredients AS i
+                SET ""AverageCost"" = ((s.""Quantity"" - {item.Quantity}) * i.""AverageCost"" + {item.Quantity} * {item.UnitCost}) / s.""Quantity""
+                FROM stocks AS s
+                WHERE i.""Id"" = {item.IngredientId} AND s.""IngredientId"" = {item.IngredientId}");
+
             _db.StockMovements.Add(new StockMovement
             {
                 TenantId = _tenant.TenantId!.Value,
@@ -196,6 +216,81 @@ public class PurchasesController : ControllerBase
         return Ok(await BuildResponseAsync(purchase, journalEntry.Id));
     }
 
+    /// <summary>
+    /// Records one installment against a Purchase's Accounts Payable balance
+    /// (Debit Accounts Payable, Credit Cash — the mirror image of the original
+    /// Purchase's journal lines). Supports partial payment: the atomic conditional
+    /// UPDATE below allows any Amount up to the remaining balance, and PaymentStatus
+    /// moves Unpaid -> PartiallyPaid -> Paid as AmountPaid climbs toward TotalAmount.
+    /// The WHERE clause (AmountPaid + Amount <= TotalAmount) is what prevents
+    /// overpaying — checked atomically against the current committed row, not a
+    /// stale read, so two concurrent payments against the same Purchase can't
+    /// together exceed the total even if both pass a naive "enough remaining?" check
+    /// in application code first.
+    /// </summary>
+    [HttpPost("{id:guid}/payments")]
+    public async Task<ActionResult<PurchasePaymentResponse>> RecordPayment(Guid id, RecordPurchasePaymentRequest request)
+    {
+        if (request.Amount <= 0)
+        {
+            return BadRequest(new { message = "Payment Amount must be positive." });
+        }
+
+        var purchase = await _db.Purchases.SingleOrDefaultAsync(p => p.Id == id);
+        if (purchase is null)
+        {
+            return NotFound();
+        }
+
+        var userId = User.GetUserId();
+        var amount = request.Amount;
+
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+
+        var claimed = await _db.Purchases
+            .Where(p => p.Id == id && p.AmountPaid + amount <= p.TotalAmount)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(p => p.AmountPaid, p => p.AmountPaid + amount)
+                .SetProperty(p => p.PaymentStatus, p =>
+                    p.AmountPaid + amount >= p.TotalAmount ? PurchasePaymentStatus.Paid : PurchasePaymentStatus.PartiallyPaid));
+
+        if (claimed == 0)
+        {
+            await transaction.RollbackAsync();
+            return BadRequest(new { message = "Payment would exceed the remaining balance on this Purchase." });
+        }
+
+        _db.PurchasePayments.Add(new PurchasePayment
+        {
+            TenantId = _tenant.TenantId!.Value,
+            BranchId = _tenant.BranchId!.Value,
+            PurchaseId = id,
+            Amount = amount,
+            PaidByUserId = userId
+        });
+
+        var cashAccount = await _db.Accounts.SingleAsync(a => a.Code == "1000");
+        var accountsPayableAccount = await _db.Accounts.SingleAsync(a => a.Code == "2000");
+
+        var journalEntry = new JournalEntry
+        {
+            TenantId = _tenant.TenantId!.Value,
+            BranchId = _tenant.BranchId!.Value,
+            ReferenceType = "PurchasePayment",
+            ReferenceId = id
+        };
+        journalEntry.Lines.Add(new JournalLine { TenantId = _tenant.TenantId!.Value, JournalEntryId = journalEntry.Id, AccountId = accountsPayableAccount.Id, Debit = amount, Credit = 0 });
+        journalEntry.Lines.Add(new JournalLine { TenantId = _tenant.TenantId!.Value, JournalEntryId = journalEntry.Id, AccountId = cashAccount.Id, Debit = 0, Credit = amount });
+        journalEntry.AssertBalanced();
+        _db.JournalEntries.Add(journalEntry);
+
+        await _db.SaveChangesAsync();
+        await transaction.CommitAsync();
+
+        var updated = await _db.Purchases.AsNoTracking().SingleAsync(p => p.Id == id);
+        return Ok(new PurchasePaymentResponse(id, updated.AmountPaid, updated.TotalAmount - updated.AmountPaid, updated.PaymentStatus, journalEntry.Id));
+    }
+
     private async Task<PurchaseResponse> BuildResponseAsync(Purchase purchase, Guid? journalEntryId)
     {
         var supplierName = await _db.Suppliers.Where(s => s.Id == purchase.SupplierId).Select(s => s.Name).SingleAsync();
@@ -215,6 +310,9 @@ public class PurchasesController : ControllerBase
             .Select(j => j.Id)
             .SingleAsync();
 
-        return new PurchaseResponse(purchase.Id, purchase.SupplierId, supplierName, purchase.PurchaseRequestId, purchase.TotalAmount, resolvedJournalEntryId, items);
+        return new PurchaseResponse(
+            purchase.Id, purchase.SupplierId, supplierName, purchase.PurchaseRequestId,
+            purchase.TotalAmount, purchase.AmountPaid, purchase.TotalAmount - purchase.AmountPaid, purchase.PaymentStatus,
+            resolvedJournalEntryId, items);
     }
 }
