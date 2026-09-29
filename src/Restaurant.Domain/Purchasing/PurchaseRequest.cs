@@ -6,7 +6,18 @@ public enum PurchaseRequestStatus
 {
     Pending,
     Approved,
-    Rejected
+    Rejected,
+
+    /// <summary>
+    /// A Purchase has been recorded against this request (see PurchasesController.Create).
+    /// Terminal, like Rejected — once Fulfilled, no further Purchase can reference this
+    /// request (guarded by the same atomic claim pattern used everywhere else in this
+    /// codebase for a status a row can only leave once). Known simplification: this
+    /// models "the whole request was fulfilled by one Purchase," not partial
+    /// fulfillment (e.g. requesting 50kg but only 30kg actually purchased so far) —
+    /// there's no per-item requested-vs-fulfilled-quantity tracking.
+    /// </summary>
+    Fulfilled
 }
 
 /// <summary>

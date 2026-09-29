@@ -102,7 +102,11 @@ public class IngredientsController : ControllerBase
             return BadRequest(new { message = "Provide exactly one of CountedQuantity (Opname) or DeltaQuantity (ManualAdjustment)." });
         }
 
-        if (!await _db.Ingredients.AnyAsync(i => i.Id == ingredientId))
+        var averageCost = await _db.Ingredients
+            .Where(i => i.Id == ingredientId)
+            .Select(i => (decimal?)i.AverageCost)
+            .SingleOrDefaultAsync();
+        if (averageCost is null)
         {
             return NotFound();
         }
@@ -212,7 +216,11 @@ public class IngredientsController : ControllerBase
             Reason = reason,
             ReferenceType = "Ingredient",
             ReferenceId = ingredientId,
-            CreatedByUserId = userId
+            CreatedByUserId = userId,
+            // Snapshot for Waste/ManualAdjustment only — Opname is a count
+            // correction, not a valued loss/gain, so a cost figure isn't meaningful
+            // for it. See GET /api/reports/waste, the reader of this field.
+            UnitCostAtTime = reason is StockMovementReason.Waste or StockMovementReason.ManualAdjustment ? averageCost : null
         });
 
         _db.AuditLogs.Add(new AuditLog

@@ -482,6 +482,47 @@ real lock-in risk.
   `Debit Accounts Payable / Credit Cash` — the mirror image of the original
   Purchase's `Debit Inventory Asset / Credit Accounts Payable` lines.
 
+### Closing the loop: PurchaseRequest.Fulfilled and the Waste value report
+
+Found during an explicit "is the business flow actually complete" review (not a bug
+report) right after COGS/Purchase Payments landed: two things had been *set up* to
+be closed later but never actually were.
+
+- **`PurchaseRequestStatus.Fulfilled`**: previously, an approved `PurchaseRequest`
+  stayed `Approved` forever, even after a `Purchase` was recorded against it — there
+  was no way to tell "which approved requests still need buying" from "which are
+  done." `PurchasesController.Create` now atomically claims
+  `Approved → Fulfilled` (same pattern as every other single-transition status in
+  this codebase — Checkout claiming the Order, `PurchaseRequestsController.Review`
+  claiming `Pending`) as the first thing it does inside the transaction, right after
+  beginning it. This doubles as a genuine concurrency guard, not just a status
+  label: two concurrent Purchases both trying to reference the same approved request
+  can't both succeed — verified manually (approve a PR, record a Purchase against
+  it → `Fulfilled`; try a second Purchase against the same now-`Fulfilled`
+  request → clean `400`, same message path as trying to buy against a `Pending` one).
+  **Known simplification, not fixed here**: this models "the whole request was
+  fulfilled by one Purchase," not partial fulfillment — there's no per-item
+  requested-vs-fulfilled-quantity tracking, so a PR for 50kg satisfied by a 30kg
+  Purchase still flips straight to `Fulfilled`.
+- **`GET /api/reports/waste`**: the `Waste` StockMovementReason existed since the
+  Purchasing extension specifically "so it could be reported on separately," but
+  nothing ever read it into a value — this closes that. Defaults to the **current
+  month**, not a single day like `sales-daily`, because "how much did we lose to
+  waste" is naturally a monthly question. Needed one new field,
+  `StockMovement.UnitCostAtTime` — a snapshot of the Ingredient's `AverageCost` at
+  the moment the movement was recorded (populated in
+  `IngredientsController.AdjustStock` for `Waste`/`ManualAdjustment` only; `Opname`
+  is a count correction, not a valued loss, so it's left `null`). Using a snapshot
+  rather than "multiply today's `AverageCost` by historical quantity" matters:
+  `AverageCost` changes over time as new Purchases land, so without a snapshot this
+  report would silently drift every time someone looks at a past month. Verified
+  end-to-end: 2000g of Waste recorded when `AverageCost` was 8/unit reported exactly
+  `16000` — consistent with the same weighted-average dilution behavior documented
+  above, since that 8 already reflects the seeded-stock-at-cost-0 artifact.
+  **Known gap**: any `Waste`/`ManualAdjustment` movement recorded *before* this field
+  existed has `UnitCostAtTime = null` and contributes `0` to this report — it won't
+  retroactively backfill history.
+
 ## Concurrency
 - "At most one open Shift per user" is enforced by a **partial unique index**
   (`shifts (UserId) WHERE Status = 0`), not just the `AnyAsync` check in

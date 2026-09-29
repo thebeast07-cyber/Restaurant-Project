@@ -38,4 +38,15 @@ public class StockMovement : Entity, IBranchScoped
     public required string ReferenceType { get; set; }
     public required Guid ReferenceId { get; set; }
     public Guid? CreatedByUserId { get; set; }
+
+    /// <summary>
+    /// Snapshot of Ingredient.AverageCost at the moment this movement was recorded —
+    /// null for movements where a cost snapshot isn't meaningful (Sale/Void post COGS
+    /// straight to the JournalEntry instead; Purchase's cost is already on
+    /// PurchaseItem.UnitCost). Currently only populated for Waste (and
+    /// ManualAdjustment, for consistency) by IngredientsController.AdjustStock — this
+    /// is what GET /api/reports/waste multiplies against ChangeQuantity to report a
+    /// real Rupiah figure instead of just a quantity.
+    /// </summary>
+    public decimal? UnitCostAtTime { get; set; }
 }

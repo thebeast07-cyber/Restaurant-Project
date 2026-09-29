@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Restaurant.Api.Contracts;
+using Restaurant.Domain.Inventory;
 using Restaurant.Domain.Payment;
 using Restaurant.Domain.Sales;
 using Restaurant.Infrastructure.Persistence;
@@ -94,5 +95,49 @@ public class ReportsController : ControllerBase
             .ToListAsync();
 
         return Ok(new StockLevelReportResponse(DateTimeOffset.UtcNow, items.Count(i => i.IsBelowMinimum), items));
+    }
+
+    /// <summary>
+    /// Not in the original PRD — added by explicit agreement to close the loop on
+    /// the Waste category (StockMovementReason.Waste, added alongside the
+    /// Purchasing module): the category existed so waste could "be reported on
+    /// separately," but nothing actually read it into a value until this endpoint.
+    /// Defaults to the current month rather than a single day (unlike sales-daily)
+    /// because "how much did we lose to waste" is naturally asked as a monthly
+    /// question, not a daily one. WasteValue uses StockMovement.UnitCostAtTime — the
+    /// Ingredient's Weighted-Average cost *snapshotted at the moment the waste was
+    /// recorded* (IngredientsController.AdjustStock), not today's current cost, so
+    /// this report doesn't silently drift if AverageCost changes after the fact.
+    /// Movements recorded before this field existed, or against an Ingredient that
+    /// had no AverageCost yet, show a 0 value for that entry — a known reporting
+    /// gap, not a crash.
+    /// </summary>
+    [HttpGet("waste")]
+    public async Task<ActionResult<WasteReportResponse>> Waste([FromQuery] int? year, [FromQuery] int? month)
+    {
+        var now = DateTime.UtcNow;
+        var targetYear = year ?? now.Year;
+        var targetMonth = month ?? now.Month;
+
+        var rangeStart = new DateTimeOffset(new DateTime(targetYear, targetMonth, 1), TimeSpan.Zero);
+        var rangeEnd = rangeStart.AddMonths(1);
+
+        var wasteMovements = await _db.StockMovements
+            .Where(m => m.Reason == StockMovementReason.Waste && m.CreatedAt >= rangeStart && m.CreatedAt < rangeEnd)
+            .Join(_db.Ingredients, m => m.IngredientId, i => i.Id, (m, i) => new { m.ChangeQuantity, m.UnitCostAtTime, i.Id, i.Name, i.Unit })
+            .ToListAsync();
+
+        var items = wasteMovements
+            .GroupBy(x => new { x.Id, x.Name, x.Unit })
+            .Select(g => new WasteReportItem(
+                g.Key.Id,
+                g.Key.Name,
+                g.Key.Unit,
+                -g.Sum(x => x.ChangeQuantity), // ChangeQuantity is negative for Waste; report a positive "quantity lost"
+                -g.Sum(x => x.ChangeQuantity * (x.UnitCostAtTime ?? 0m))))
+            .OrderByDescending(i => i.WasteValue)
+            .ToList();
+
+        return Ok(new WasteReportResponse(targetYear, targetMonth, items.Sum(i => i.WasteValue), items));
     }
 }

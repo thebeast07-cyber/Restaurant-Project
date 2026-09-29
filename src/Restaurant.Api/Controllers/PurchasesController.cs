@@ -52,10 +52,13 @@ public class PurchasesController : ControllerBase
     /// without the matching liability recorded, or vice versa.
     ///
     /// PurchaseRequestId is optional: if given, the referenced request must be
-    /// Approved (not Pending/Rejected) — but a Purchase can also be recorded with no
-    /// PurchaseRequestId at all, for a purchase that never went through the
-    /// Request/Approval flow (e.g. an emergency walk-in buy). The approval flow is a
-    /// control, not a hard gate on whether stock/AP can move.
+    /// Approved (not Pending/Rejected/already-Fulfilled) — but a Purchase can also be
+    /// recorded with no PurchaseRequestId at all, for a purchase that never went
+    /// through the Request/Approval flow (e.g. an emergency walk-in buy). The
+    /// approval flow is a control, not a hard gate on whether stock/AP can move.
+    /// Successfully recording a Purchase against a request atomically moves it
+    /// Approved -> Fulfilled, closing the loop so a Manager can tell which approved
+    /// requests still need a Purchase recorded against them.
     /// </summary>
     [HttpPost]
     public async Task<ActionResult<PurchaseResponse>> Create(CreatePurchaseRequest request)
@@ -125,6 +128,25 @@ public class PurchasesController : ControllerBase
         purchase.RecalculateTotal();
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
+
+        if (request.PurchaseRequestId is not null)
+        {
+            // Atomic claim, same pattern as every other single-transition status in
+            // this codebase (Checkout claiming the Order, Void claiming the Order,
+            // PurchaseRequestsController.Review claiming Pending): two concurrent
+            // Purchases recorded against the same approved request must not both
+            // succeed. The pre-transaction check above is just a fast-fail for the
+            // common case — this is the authoritative guard.
+            var claimedRequest = await _db.PurchaseRequests
+                .Where(pr => pr.Id == request.PurchaseRequestId && pr.Status == PurchaseRequestStatus.Approved)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(pr => pr.Status, PurchaseRequestStatus.Fulfilled));
+
+            if (claimedRequest == 0)
+            {
+                await transaction.RollbackAsync();
+                return BadRequest(new { message = "This request was already fulfilled (or reviewed again) by another request." });
+            }
+        }
 
         // Upsert-by-catch for any Ingredient that has no Stock row yet — same pattern
         // as IngredientsController.AdjustStock (Day 10) and ShiftsController.Open.
