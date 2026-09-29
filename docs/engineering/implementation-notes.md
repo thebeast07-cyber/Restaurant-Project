@@ -14,7 +14,8 @@ way — for whoever joins this codebase next (including future-us).
 
 ## Current State
 
-Sprint day: **13 / 14** (see technical design doc for the full day-by-day plan).
+Sprint day: **14 / 14** (see technical design doc for the full day-by-day plan). See
+[`go-live-checklist.md`](go-live-checklist.md) for the Day 14 go/no-go writeup.
 **Walking skeleton milestone reached** (Day 4): Order → Checkout → Inventory deducted
 via Recipe → balanced Finance journal posted, all in one atomic transaction. Verified
 down to raw SQL, not just API responses. **Day 5**: stress-tested the concurrent paths
