@@ -74,6 +74,47 @@ public class StockRaceConditionTests : IClassFixture<TestWebApplicationFactory>
         Assert.Equal(availableStock - successCount, finalStock.Quantity);
     }
 
+    /// <summary>
+    /// The literal Day 13 sprint scenario (docs/architecture/01-mvp-technical-design.md
+    /// §4: "2 order rebutan item terakhir") as its own minimal, canonical repro,
+    /// separate from the 20-vs-5 stress test above — exactly 1 unit of stock, exactly
+    /// 2 orders, so a failure here points straight at the last-unit edge case rather
+    /// than needing to be inferred from a larger scenario.
+    /// </summary>
+    [Fact]
+    public async Task TwoOrders_CompetingForTheLastUnit_OnlyOneSucceeds()
+    {
+        var (_, _, productId, ingredientId) = await SeedScarceProductAsync(quantity: 1);
+
+        var loginClient = _factory.CreateClient();
+        var token = await loginClient.LoginAsync("cashier", "Cashier#12345");
+        var clientA = _factory.CreateClient().WithToken(token);
+        var clientB = _factory.CreateClient().WithToken(token);
+
+        await clientA.EnsureShiftOpenAsync();
+
+        var orderA = await clientA.CreateOrderAsync();
+        var orderB = await clientB.CreateOrderAsync();
+        (await clientA.AddItemAsync(orderA, productId, quantity: 1)).EnsureSuccessStatusCode();
+        (await clientB.AddItemAsync(orderB, productId, quantity: 1)).EnsureSuccessStatusCode();
+
+        // Fired together via Task.WhenAll, not two sequential awaits — they must
+        // genuinely overlap for this to exercise the race instead of two serialized
+        // requests that would trivially never conflict.
+        var results = await Task.WhenAll(clientA.CheckoutAsync(orderA), clientB.CheckoutAsync(orderB));
+
+        Assert.All(results, r => Assert.True(
+            (int)r.StatusCode is 200 or 400,
+            $"Unexpected status {r.StatusCode}: {r.Content.ReadAsStringAsync().Result}"));
+
+        var successCount = results.Count(r => (int)r.StatusCode == 200);
+        Assert.Equal(1, successCount);
+
+        await using var db = _factory.CreateDbContext();
+        var finalStock = await db.Stocks.IgnoreQueryFilters().SingleAsync(s => s.IngredientId == ingredientId);
+        Assert.Equal(0, finalStock.Quantity);
+    }
+
     private async Task<(Guid tenantId, Guid branchId, Guid productId, Guid ingredientId)> SeedScarceProductAsync(int quantity)
     {
         await using var db = _factory.CreateDbContext();

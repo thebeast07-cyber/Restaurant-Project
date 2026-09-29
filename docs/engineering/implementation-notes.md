@@ -14,7 +14,7 @@ way — for whoever joins this codebase next (including future-us).
 
 ## Current State
 
-Sprint day: **12 / 14** (see technical design doc for the full day-by-day plan).
+Sprint day: **13 / 14** (see technical design doc for the full day-by-day plan).
 **Walking skeleton milestone reached** (Day 4): Order → Checkout → Inventory deducted
 via Recipe → balanced Finance journal posted, all in one atomic transaction. Verified
 down to raw SQL, not just API responses. **Day 5**: stress-tested the concurrent paths
@@ -315,6 +315,28 @@ alongside this one, not a rewrite of it.
 - `GET /api/reports/stock-levels`: same ingredient/stock left-join shape as
   `GET /api/ingredients` (Day 10), just role-gated and framed as a report response
   (`AsOf` timestamp + list) rather than a catalog listing.
+
+### Integration Testing (Day 13)
+No new production code — this day's deliverable is the two scenarios the sprint plan
+calls out by name, verified with dedicated tests rather than assumed covered by the
+broader stress tests already written on the days the underlying fixes landed:
+- **"2 order rebutan item terakhir"**: `StockRaceConditionTests.TwoOrders_CompetingForTheLastUnit_OnlyOneSucceeds`
+  — a minimal, literal repro (1 unit of stock, exactly 2 concurrent orders) alongside
+  the existing 20-vs-5 stress test, so a future regression here points straight at the
+  last-unit edge case instead of needing to be inferred from a larger scenario.
+- **Idempotency payment**: `PaymentIdempotencyTests.RetryingCheckoutAfterSuccess_FailsCleanly_WithoutDuplicatingPaymentOrJournalOrStock`
+  covers the *sequential* retry (client times out, retries the same checkout call
+  after the first already landed) — the case `OrderCheckoutRaceTests` (Day 5
+  follow-up) doesn't, since that one fires both calls concurrently. Both land on the
+  same atomic Order-status claim in `OrdersController.Checkout`
+  (`Draft/Open → Completed`, checking rows-affected), so a retry after success gets a
+  clean `400` ("already checked out by another request") with zero duplicate
+  Payment/JournalEntry/StockMovement rows — **not** a `200` replaying the original
+  result. This is a deliberate scope line: true idempotency-key semantics (retry
+  returns the *same* success response) matter once a real async payment gateway
+  exists (see the "jembatan bank/e-wallet" discussion — still vendor-TBD per PRD §14),
+  not for the current synchronous Cash/QRIS-manual flow where a clean rejection is a
+  perfectly safe outcome for a retried request.
 
 ## Concurrency
 - "At most one open Shift per user" is enforced by a **partial unique index**
