@@ -1,0 +1,80 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Restaurant.Api.Contracts;
+using Restaurant.Domain.Payment;
+using Restaurant.Domain.Sales;
+using Restaurant.Infrastructure.Persistence;
+
+namespace Restaurant.Api.Controllers;
+
+/// <summary>
+/// P0 reporting scope per PRD §17/§10.12: daily sales and stock levels, Manager view
+/// only. Both are read-only aggregates over data already written by other
+/// controllers — no new state, no new invariants to protect.
+/// </summary>
+[ApiController]
+[Route("api/reports")]
+[Authorize(Roles = "Owner,Manager")]
+public class ReportsController : ControllerBase
+{
+    private readonly AppDbContext _db;
+
+    public ReportsController(AppDbContext db)
+    {
+        _db = db;
+    }
+
+    /// <summary>
+    /// Revenue is Confirmed-Payment based (same source as Shift Close's
+    /// reconciliation), not Order.TotalAmount — that keeps this consistent with
+    /// what Shift Close reports, and correctly handles the (currently theoretical,
+    /// since Checkout takes full payment) case of a partially-paid order. Filtering
+    /// on Order.Status == Completed / Voided (not the Payment row) is what excludes
+    /// a voided sale's cash from CashTotal — Void never edits/deletes the original
+    /// Payment (see OrdersController.Void, Shift Close notes).
+    /// </summary>
+    [HttpGet("sales-daily")]
+    public async Task<ActionResult<SalesDailyReportResponse>> SalesDaily([FromQuery] DateOnly? date)
+    {
+        var targetDate = date ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var rangeStart = new DateTimeOffset(targetDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var rangeEnd = rangeStart.AddDays(1);
+
+        var ordersInRange = _db.Orders.Where(o => o.CreatedAt >= rangeStart && o.CreatedAt < rangeEnd);
+
+        var completedOrderCount = await ordersInRange.CountAsync(o => o.Status == OrderStatus.Completed);
+        var voidedOrderCount = await ordersInRange.CountAsync(o => o.Status == OrderStatus.Voided);
+
+        var confirmedPayments = await _db.Payments
+            .Where(p => p.Status == PaymentStatus.Confirmed)
+            .Join(ordersInRange.Where(o => o.Status == OrderStatus.Completed),
+                p => p.OrderId, o => o.Id, (p, o) => p)
+            .Join(_db.PaymentMethods, p => p.PaymentMethodId, m => m.Id, (p, m) => new { p.Amount, m.Code })
+            .ToListAsync();
+
+        var cashTotal = confirmedPayments.Where(x => x.Code == PaymentMethodCode.Cash).Sum(x => x.Amount);
+        var nonCashTotal = confirmedPayments.Where(x => x.Code != PaymentMethodCode.Cash).Sum(x => x.Amount);
+
+        return Ok(new SalesDailyReportResponse(
+            targetDate,
+            completedOrderCount,
+            voidedOrderCount,
+            cashTotal,
+            nonCashTotal,
+            cashTotal + nonCashTotal));
+    }
+
+    [HttpGet("stock-levels")]
+    public async Task<ActionResult<StockLevelReportResponse>> StockLevels()
+    {
+        var items = await _db.Ingredients
+            .OrderBy(i => i.Name)
+            .GroupJoin(_db.Stocks, i => i.Id, s => s.IngredientId, (i, stocks) => new { i, stocks })
+            .SelectMany(x => x.stocks.DefaultIfEmpty(), (x, stock) =>
+                new StockLevelReportItem(x.i.Id, x.i.Name, x.i.Unit, stock == null ? 0 : stock.Quantity))
+            .ToListAsync();
+
+        return Ok(new StockLevelReportResponse(DateTimeOffset.UtcNow, items));
+    }
+}

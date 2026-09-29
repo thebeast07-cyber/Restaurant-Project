@@ -14,7 +14,7 @@ way — for whoever joins this codebase next (including future-us).
 
 ## Current State
 
-Sprint day: **11 / 14** (see technical design doc for the full day-by-day plan).
+Sprint day: **12 / 14** (see technical design doc for the full day-by-day plan).
 **Walking skeleton milestone reached** (Day 4): Order → Checkout → Inventory deducted
 via Recipe → balanced Finance journal posted, all in one atomic transaction. Verified
 down to raw SQL, not just API responses. **Day 5**: stress-tested the concurrent paths
@@ -31,8 +31,8 @@ station ticket routing/formatting (content only — no physical printer wired ye
 pending hardware confirmation), full table occupancy lifecycle (Available <-> Occupied,
 concurrency-safe), Void (PIN-gated, reverses stock + journal, releases table, audited),
 Stock adjustment/opname (Owner/Manager, writes StockMovement + AuditLog),
-Shift close with cash reconciliation.
-Not started: physical printer integration, Reporting, any UI.
+Shift close with cash reconciliation, basic Reporting (daily sales, stock levels).
+Not started: physical printer integration, any UI.
 
 ## Running Locally
 
@@ -292,6 +292,29 @@ alongside this one, not a rewrite of it.
   a shift is `Closed` it simply stops being found — no separate "is my shift closed"
   check was needed. Verified: creating an order right after closing returns the
   existing "Open a shift before creating an order" `400`, unchanged from Day 3.
+
+### Reporting (Day 12)
+- New `ReportsController`, `[Authorize(Roles = "Owner,Manager")]` at the class level
+  — matches PRD §10.12/§17's P0 scope exactly: daily sales + stock levels, Manager
+  view, nothing else. Both endpoints are read-only aggregates over data other
+  controllers already wrote; no new state or invariants here.
+- `GET /api/reports/sales-daily?date=yyyy-MM-dd` (defaults to today, UTC): revenue is
+  **Confirmed-Payment based, not `Order.TotalAmount`** — same source Shift Close
+  (Day 11) reconciles against, so the two reports can never disagree about what a
+  "sale" is. Split into `CashTotal`/`NonCashTotal` by `PaymentMethod.Code`, plus
+  `CompletedOrderCount`/`VoidedOrderCount` for the day. Filtering is on
+  `Order.Status` (`Completed` vs `Voided`), not the `Payment` row, for the same
+  reason as Shift Close: Void never edits/deletes the original `Payment`, so
+  `Payment` alone can't distinguish a real sale from a voided one.
+  Date range is built as explicit `DateTimeOffset` bounds (`>= rangeStart <
+  rangeStart.AddDays(1)`) rather than comparing `.Date` in the query, since the
+  latter doesn't reliably translate to SQL across providers — this does.
+  Verified against a direct SQL aggregate on real stress-test data (111 Completed +
+  2 Voided orders on one date): endpoint total matched exactly, and the 2 voided
+  orders' original payments were correctly excluded from `CashTotal`.
+- `GET /api/reports/stock-levels`: same ingredient/stock left-join shape as
+  `GET /api/ingredients` (Day 10), just role-gated and framed as a report response
+  (`AsOf` timestamp + list) rather than a catalog listing.
 
 ## Concurrency
 - "At most one open Shift per user" is enforced by a **partial unique index**
