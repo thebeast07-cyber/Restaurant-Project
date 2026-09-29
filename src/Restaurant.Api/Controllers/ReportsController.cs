@@ -65,16 +65,34 @@ public class ReportsController : ControllerBase
             cashTotal + nonCashTotal));
     }
 
+    /// <summary>
+    /// IsBelowMinimum/BelowMinimumCount are not in the original PRD — added by
+    /// explicit agreement as the data foundation for a low-stock signal. A
+    /// MinimumStock of exactly 0 means "no threshold configured" (see Ingredient.cs),
+    /// so it's never flagged — otherwise every never-configured ingredient would show
+    /// as perpetually below minimum. This is report-only; there's no active
+    /// notification (WhatsApp/email/push) wired to it, that's a deliberately deferred,
+    /// separate decision pending a channel/vendor choice.
+    /// </summary>
     [HttpGet("stock-levels")]
     public async Task<ActionResult<StockLevelReportResponse>> StockLevels()
     {
         var items = await _db.Ingredients
             .OrderBy(i => i.Name)
             .GroupJoin(_db.Stocks, i => i.Id, s => s.IngredientId, (i, stocks) => new { i, stocks })
-            .SelectMany(x => x.stocks.DefaultIfEmpty(), (x, stock) =>
-                new StockLevelReportItem(x.i.Id, x.i.Name, x.i.Unit, stock == null ? 0 : stock.Quantity))
+            .SelectMany(x => x.stocks.DefaultIfEmpty(), (x, stock) => new
+            {
+                x.i.Id,
+                x.i.Name,
+                x.i.Unit,
+                x.i.MinimumStock,
+                CurrentStock = stock == null ? 0 : stock.Quantity
+            })
+            .Select(x => new StockLevelReportItem(
+                x.Id, x.Name, x.Unit, x.CurrentStock, x.MinimumStock,
+                x.MinimumStock > 0 && x.CurrentStock < x.MinimumStock))
             .ToListAsync();
 
-        return Ok(new StockLevelReportResponse(DateTimeOffset.UtcNow, items));
+        return Ok(new StockLevelReportResponse(DateTimeOffset.UtcNow, items.Count(i => i.IsBelowMinimum), items));
     }
 }

@@ -33,7 +33,7 @@ public class IngredientsController : ControllerBase
             .OrderBy(i => i.Name)
             .GroupJoin(_db.Stocks, i => i.Id, s => s.IngredientId, (i, stocks) => new { i, stocks })
             .SelectMany(x => x.stocks.DefaultIfEmpty(), (x, stock) =>
-                new IngredientResponse(x.i.Id, x.i.Name, x.i.Unit, stock == null ? 0 : stock.Quantity))
+                new IngredientResponse(x.i.Id, x.i.Name, x.i.Unit, stock == null ? 0 : stock.Quantity, x.i.MinimumStock))
             .ToListAsync();
 
         return Ok(ingredients);
@@ -48,13 +48,33 @@ public class IngredientsController : ControllerBase
             TenantId = _tenant.TenantId!.Value,
             BranchId = _tenant.BranchId!.Value,
             Name = request.Name,
-            Unit = request.Unit
+            Unit = request.Unit,
+            MinimumStock = request.MinimumStock
         };
 
         _db.Ingredients.Add(ingredient);
         await _db.SaveChangesAsync();
 
-        return Ok(new IngredientResponse(ingredient.Id, ingredient.Name, ingredient.Unit, 0));
+        return Ok(new IngredientResponse(ingredient.Id, ingredient.Name, ingredient.Unit, 0, ingredient.MinimumStock));
+    }
+
+    /// <summary>
+    /// Not in the original PRD — added by explicit agreement so a low-stock threshold
+    /// can be set for ingredients that already exist (seeded/created before this was
+    /// added), not just new ones via Create's optional field. This is the data
+    /// foundation for a low-stock signal; there's no active notification (WhatsApp/
+    /// email/push) wired to it yet — that's a separate, deliberately deferred decision
+    /// pending a channel/vendor choice, same shape as the payment-gateway question.
+    /// </summary>
+    [HttpPut("{ingredientId:guid}/minimum-stock")]
+    [Authorize(Roles = "Owner,Manager")]
+    public async Task<IActionResult> UpdateMinimumStock(Guid ingredientId, UpdateMinimumStockRequest request)
+    {
+        var updated = await _db.Ingredients
+            .Where(i => i.Id == ingredientId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(i => i.MinimumStock, request.MinimumStock));
+
+        return updated == 0 ? NotFound() : NoContent();
     }
 
     /// <summary>
@@ -122,7 +142,12 @@ public class IngredientsController : ControllerBase
 
         if (request.DeltaQuantity is not null)
         {
-            reason = StockMovementReason.ManualAdjustment;
+            reason = request.DeltaReason ?? StockMovementReason.ManualAdjustment;
+            if (reason is not (StockMovementReason.ManualAdjustment or StockMovementReason.Waste))
+            {
+                return BadRequest(new { message = "DeltaReason must be ManualAdjustment or Waste when DeltaQuantity is given." });
+            }
+
             changeQuantity = request.DeltaQuantity.Value;
 
             if (changeQuantity == 0)

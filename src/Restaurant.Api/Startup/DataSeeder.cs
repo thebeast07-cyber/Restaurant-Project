@@ -141,7 +141,8 @@ public static class DataSeeder
         var revenue = new Account { TenantId = tenant.Id, Code = "4000", Name = "Revenue", Type = AccountType.Revenue };
         var inventoryAsset = new Account { TenantId = tenant.Id, Code = "1100", Name = "Inventory Asset", Type = AccountType.Asset };
         var cogs = new Account { TenantId = tenant.Id, Code = "5000", Name = "Cost of Goods Sold", Type = AccountType.Expense };
-        db.Accounts.AddRange(cash, revenue, inventoryAsset, cogs);
+        var accountsPayable = new Account { TenantId = tenant.Id, Code = "2000", Name = "Accounts Payable", Type = AccountType.Liability };
+        db.Accounts.AddRange(cash, revenue, inventoryAsset, cogs, accountsPayable);
 
         db.PaymentMethods.AddRange(
             new PaymentMethod { TenantId = tenant.Id, Code = PaymentMethodCode.Cash, Name = "Cash" },

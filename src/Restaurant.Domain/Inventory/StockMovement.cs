@@ -7,7 +7,20 @@ public enum StockMovementReason
     Sale,
     Void,
     ManualAdjustment,
-    Opname
+    Opname,
+
+    /// <summary>Stock increment from a recorded Purchase (see Restaurant.Domain.Purchasing.Purchase).</summary>
+    Purchase,
+
+    /// <summary>
+    /// Spoilage/breakage/expiry — split out from ManualAdjustment (not in the
+    /// original PRD; added by explicit agreement) specifically so it can be reported
+    /// on separately as a real business cost, instead of being indistinguishable from
+    /// an ordinary counting correction. Recorded through the same
+    /// IngredientsController.AdjustStock endpoint as ManualAdjustment/Opname, just a
+    /// different reason value — no new endpoint needed.
+    /// </summary>
+    Waste
 }
 
 /// <summary>

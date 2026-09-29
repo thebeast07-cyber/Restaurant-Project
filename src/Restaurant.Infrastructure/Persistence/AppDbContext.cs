@@ -8,6 +8,7 @@ using Restaurant.Domain.Identity;
 using Restaurant.Domain.Inventory;
 using Restaurant.Domain.Organization;
 using Restaurant.Domain.Payment;
+using Restaurant.Domain.Purchasing;
 using Restaurant.Domain.Sales;
 
 namespace Restaurant.Infrastructure.Persistence;
@@ -41,6 +42,11 @@ public class AppDbContext : DbContext
     public DbSet<PaymentMethod> PaymentMethods => Set<PaymentMethod>();
     public DbSet<Domain.Payment.Payment> Payments => Set<Domain.Payment.Payment>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<Supplier> Suppliers => Set<Supplier>();
+    public DbSet<PurchaseRequest> PurchaseRequests => Set<PurchaseRequest>();
+    public DbSet<PurchaseRequestItem> PurchaseRequestItems => Set<PurchaseRequestItem>();
+    public DbSet<Purchase> Purchases => Set<Purchase>();
+    public DbSet<PurchaseItem> PurchaseItems => Set<PurchaseItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -175,6 +181,42 @@ public class AppDbContext : DbContext
         {
             a.ToTable("audit_logs");
             a.HasIndex(x => new { x.TenantId, x.BranchId, x.EntityType, x.EntityId });
+        });
+
+        modelBuilder.Entity<Supplier>(s =>
+        {
+            s.ToTable("suppliers");
+            s.HasIndex(x => new { x.TenantId, x.BranchId });
+        });
+
+        modelBuilder.Entity<PurchaseRequest>(pr =>
+        {
+            pr.ToTable("purchase_requests");
+            pr.HasIndex(x => new { x.TenantId, x.BranchId, x.Status });
+        });
+
+        modelBuilder.Entity<PurchaseRequestItem>(pri =>
+        {
+            pri.ToTable("purchase_request_items");
+            pri.HasIndex(x => x.PurchaseRequestId);
+            pri.HasOne<PurchaseRequest>().WithMany(pr => pr.Items).HasForeignKey(x => x.PurchaseRequestId).OnDelete(DeleteBehavior.Cascade);
+            pri.HasOne<Ingredient>().WithMany().HasForeignKey(x => x.IngredientId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Purchase>(p =>
+        {
+            p.ToTable("purchases");
+            p.HasIndex(x => new { x.TenantId, x.BranchId });
+            p.HasOne<Supplier>().WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
+            p.HasOne<PurchaseRequest>().WithMany().HasForeignKey(x => x.PurchaseRequestId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<PurchaseItem>(pi =>
+        {
+            pi.ToTable("purchase_items");
+            pi.HasIndex(x => x.PurchaseId);
+            pi.HasOne<Purchase>().WithMany(p => p.Items).HasForeignKey(x => x.PurchaseId).OnDelete(DeleteBehavior.Cascade);
+            pi.HasOne<Ingredient>().WithMany().HasForeignKey(x => x.IngredientId).OnDelete(DeleteBehavior.Restrict);
         });
 
         ApplyTenantQueryFilters(modelBuilder);

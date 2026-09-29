@@ -14,4 +14,14 @@ public class Ingredient : Entity, IBranchScoped
 
     /// <summary>Unit of measure, e.g. "gram", "ml", "pcs".</summary>
     public required string Unit { get; set; }
+
+    /// <summary>
+    /// Reorder threshold — not in the original PRD, added by explicit agreement to
+    /// give Purchasing a concrete signal for when a Manager should raise a
+    /// PurchaseRequest. 0 means "no threshold set" (never flagged low), not "always
+    /// out of stock" — there's no separate nullable/enabled flag because a real
+    /// minimum of exactly 0 isn't a meaningful business case to distinguish from "not
+    /// configured yet".
+    /// </summary>
+    public decimal MinimumStock { get; set; }
 }

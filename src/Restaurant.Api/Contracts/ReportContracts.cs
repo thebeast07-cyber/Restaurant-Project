@@ -8,6 +8,6 @@ public record SalesDailyReportResponse(
     decimal NonCashTotal,
     decimal TotalRevenue);
 
-public record StockLevelReportItem(Guid IngredientId, string Name, string Unit, decimal CurrentStock);
+public record StockLevelReportItem(Guid IngredientId, string Name, string Unit, decimal CurrentStock, decimal MinimumStock, bool IsBelowMinimum);
 
-public record StockLevelReportResponse(DateTimeOffset AsOf, List<StockLevelReportItem> Items);
+public record StockLevelReportResponse(DateTimeOffset AsOf, int BelowMinimumCount, List<StockLevelReportItem> Items);

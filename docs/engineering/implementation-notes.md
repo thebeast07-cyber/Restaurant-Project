@@ -14,8 +14,12 @@ way — for whoever joins this codebase next (including future-us).
 
 ## Current State
 
-Sprint day: **14 / 14** (see technical design doc for the full day-by-day plan). See
-[`go-live-checklist.md`](go-live-checklist.md) for the Day 14 go/no-go writeup.
+Sprint day: **14 / 14 + Purchasing extension** (see technical design doc for the full
+day-by-day plan). See [`go-live-checklist.md`](go-live-checklist.md) for the Day 14
+go/no-go writeup. Purchasing (Supplier, PurchaseRequest/Approval, Purchase, Waste,
+low-stock threshold) landed after the original 14-day plan closed — see its own
+section below for what it is and, importantly, **how and why it deviates from
+PRD §11's formal workflow**.
 **Walking skeleton milestone reached** (Day 4): Order → Checkout → Inventory deducted
 via Recipe → balanced Finance journal posted, all in one atomic transaction. Verified
 down to raw SQL, not just API responses. **Day 5**: stress-tested the concurrent paths
@@ -32,7 +36,8 @@ station ticket routing/formatting (content only — no physical printer wired ye
 pending hardware confirmation), full table occupancy lifecycle (Available <-> Occupied,
 concurrency-safe), Void (PIN-gated, reverses stock + journal, releases table, audited),
 Stock adjustment/opname (Owner/Manager, writes StockMovement + AuditLog),
-Shift close with cash reconciliation, basic Reporting (daily sales, stock levels).
+Shift close with cash reconciliation, basic Reporting (daily sales, stock levels),
+Purchasing (Supplier, PurchaseRequest/Approval, Purchase — see below).
 Not started: physical printer integration, any UI.
 
 ## Running Locally
@@ -338,6 +343,77 @@ broader stress tests already written on the days the underlying fixes landed:
   exists (see the "jembatan bank/e-wallet" discussion — still vendor-TBD per PRD §14),
   not for the current synchronous Cash/QRIS-manual flow where a clean rejection is a
   perfectly safe outcome for a retried request.
+
+### Purchasing, Waste, and Low-Stock Threshold (post-sprint extension)
+
+**This whole module is out of the original 14-day sprint scope.** It was identified
+as a gap during the Day 14 go-live review — PRD §20 lists Purchasing/receiving as P0,
+but it's absent from the actual sprint breakdown table
+(`01-mvp-technical-design.md` §4) — and built afterward by explicit agreement,
+following the collaboration model established at that point: explain the domain
+in plain terms, surface trade-offs, get an explicit go-ahead, *then* build, rather
+than the more autonomous day-by-day execution used for Day 1-14.
+
+**Deviation from PRD §11's formal Purchasing Flow** (`Purchase Request → Approval →
+PO → Receiving → Inventory (Increment) & AP (Trigger)`) — deliberate, not
+accidental, and the same *kind* of simplification already used elsewhere in this
+codebase:
+- **No separate PO / GoodsReceipt entities.** `PurchaseRequest` (the Request +
+  Approval half) is real and matches the PRD. But once approved, `Purchase` records
+  Receiving and Invoicing as a **single combined step** — Stock increments and the
+  Accounts Payable journal line post together, in one transaction, not as two
+  separate documents at two separate points in time.
+  - **The one deliberate seam for future extension**: if "goods physically received"
+    ever needs to be split from "invoice recorded" (e.g. supplier delivers before
+    sending the invoice), that split is additive — add a `GoodsReceipt` entity that
+    `Purchase`/a future `Invoice` references, move the stock-increment there. Existing
+    `Purchase` rows just mean "received and invoiced in the same step," which stays a
+    valid state — no backfill, no rewrite. See the code comment on `Purchase.cs` for
+    the same reasoning in more detail.
+- **Actor substitution, same pattern as Day 10.** PRD's actor for PO/Receiving is
+  "Warehouse Staff" — a role that doesn't exist in this system's fixed 3-role enum
+  (Owner/Manager/Cashier). `PurchaseRequestsController.Create` is Manager-only,
+  `Approve`/`Reject` is Owner-only, `PurchasesController.Create` is Owner-or-Manager.
+  This asymmetry (Manager creates, Owner reviews — Owner *cannot* create a PR) was an
+  explicit product decision from project discussion: Kitchen/Bar staff don't have
+  system accounts, so a Manager keys in requests on their behalf (tagged via
+  `RequestedFor: Kitchen|Bar|General`, a label only, not a real per-station account);
+  Owner's role is to approve/revise, not to originate requests. `Purchase.Create`
+  allows Owner too, since a `Purchase` doesn't require a `PurchaseRequestId` at all —
+  an emergency walk-in buy with no prior request is a valid, unlinked `Purchase`.
+- **First real use of the "Inventory Asset" account** (seeded since Day 4, unused
+  until now) — `Purchase` posts Debit Inventory Asset / Credit Accounts Payable
+  (new account, code `2000`). Checkout's journal still doesn't touch Inventory Asset
+  or COGS (that gap is unchanged, still needs per-Ingredient cost modeling).
+
+**Two additions that are not in the PRD at all** — added purely from project
+discussion, not derived from any requirement document, flagged here so nobody
+mistakes them for pre-existing scope:
+- **`StockMovementReason.Waste`**: split out from `ManualAdjustment` so spoilage/
+  breakage/expiry can be reported on separately from an ordinary counting
+  correction. No new endpoint — `IngredientsController.AdjustStock`
+  (Day 10) gained an optional `DeltaReason` field (`ManualAdjustment` or `Waste`)
+  that must accompany `DeltaQuantity`; `CountedQuantity` (Opname) is unaffected and
+  always reason `Opname`.
+- **`Ingredient.MinimumStock` + `GET /api/reports/stock-levels`'s
+  `IsBelowMinimum`/`BelowMinimumCount`**: the data foundation for a low-stock signal.
+  `0` means "no threshold configured," never flagged — there's no separate
+  enabled/disabled flag, since a genuine minimum of exactly 0 isn't a real business
+  case worth distinguishing from "not set up yet." **Deliberately report-only**: no
+  active notification (WhatsApp/email/push) is wired to it. That's a separate,
+  explicitly deferred decision pending a channel/vendor choice — the same shape as
+  the payment-gateway question (see the "jembatan bank/e-wallet" discussion):
+  building a notification channel before a vendor/method is chosen risks being
+  redone once that choice is made.
+
+**Concurrency**: `Purchase`'s stock increment uses the same conditional
+`ExecuteUpdateAsync` (`Quantity = Quantity + delta`, no compare-and-swap needed for a
+pure additive delta) as `ManualAdjustment` in Stock Adjustment — correct by
+construction under concurrency, verified anyway with `PurchaseRaceTests` (15
+concurrent Purchases against one Ingredient, exactly 15 successes, zero lost
+updates). `PurchaseRequest` Approve/Reject uses the same atomic
+`Pending → Approved/Rejected` claim pattern as every other single-transition status
+in this codebase.
 
 ## Concurrency
 - "At most one open Shift per user" is enforced by a **partial unique index**

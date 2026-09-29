@@ -60,11 +60,23 @@ public static class TestApiClient
     }
 
     public static async Task<HttpResponseMessage> AdjustStockAsync(
-        this HttpClient client, Guid ingredientId, decimal? countedQuantity = null, decimal? deltaQuantity = null, string reason = "test")
+        this HttpClient client, Guid ingredientId, decimal? countedQuantity = null, decimal? deltaQuantity = null,
+        string? deltaReason = null, string reason = "test")
     {
         return await client.PostAsJsonAsync(
             $"/api/ingredients/{ingredientId}/stock-adjustment",
-            new { countedQuantity, deltaQuantity, reason });
+            new { countedQuantity, deltaQuantity, deltaReason, reason });
+    }
+
+    public static async Task<HttpResponseMessage> CreatePurchaseAsync(
+        this HttpClient client, Guid supplierId, Guid ingredientId, decimal quantity, string unit, decimal unitCost)
+    {
+        return await client.PostAsJsonAsync("/api/purchases", new
+        {
+            supplierId,
+            purchaseRequestId = (Guid?)null,
+            items = new[] { new { ingredientId, quantity, unit, unitCost } }
+        });
     }
 
     private record LoginResponseDto(string Token);
