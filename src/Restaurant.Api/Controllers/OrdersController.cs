@@ -85,6 +85,47 @@ public class OrdersController : ControllerBase
         return response is null ? NotFound() : Ok(response);
     }
 
+    /// <summary>
+    /// Abandons an Order before Checkout — e.g. a cashier tapped a table just to look
+    /// (Create claims the table immediately, see the comment there) and backed out
+    /// without ordering anything, or a cart needs to be scrapped mid-build. Only
+    /// Draft/Open orders qualify: neither status has touched Payment, Stock, or
+    /// Journal yet (only Checkout does that), so there is nothing to reverse — unlike
+    /// Void, which undoes an already-settled sale. No PIN/role restriction: this
+    /// isn't a sensitive action the way Void is, since it can only ever discard an
+    /// order nobody has paid for.
+    /// </summary>
+    [HttpPost("{orderId:guid}/cancel")]
+    public async Task<ActionResult<OrderResponse>> Cancel(Guid orderId)
+    {
+        var order = await _db.Orders.SingleOrDefaultAsync(o => o.Id == orderId);
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        // Atomic claim, same guarded-transition pattern as every other status change
+        // in this controller — two concurrent cancel attempts (or a cancel racing a
+        // checkout) on the same order must not both succeed.
+        var claimed = await _db.Orders
+            .Where(o => o.Id == orderId && (o.Status == OrderStatus.Draft || o.Status == OrderStatus.Open))
+            .ExecuteUpdateAsync(setters => setters.SetProperty(o => o.Status, OrderStatus.Cancelled));
+
+        if (claimed == 0)
+        {
+            return BadRequest(new { message = $"Cannot cancel an order in status {order.Status}." });
+        }
+
+        if (order.TableId is not null)
+        {
+            await _db.Tables
+                .Where(t => t.Id == order.TableId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(t => t.Status, TableStatus.Available));
+        }
+
+        return Ok(await BuildOrderResponse(orderId));
+    }
+
     [HttpPost("{orderId:guid}/items")]
     public async Task<ActionResult<OrderResponse>> AddItem(Guid orderId, AddOrderItemRequest request)
     {

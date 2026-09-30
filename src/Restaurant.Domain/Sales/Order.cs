@@ -10,7 +10,16 @@ public enum OrderStatus
     PendingPayment,
     Paid,
     Completed,
-    Voided
+    Voided,
+
+    /// <summary>
+    /// Abandoned before Checkout — e.g. a cashier tapped a table just to look, or
+    /// backed out of an empty cart. Only reachable from Draft/Open (never Completed;
+    /// that's what Void is for), and only ever the very first write against an Order
+    /// that Payment/Stock/Journal never touched, so cancelling has nothing to
+    /// reverse — unlike Void, which undoes a settled sale.
+    /// </summary>
+    Cancelled
 }
 
 public class Order : Entity, IBranchScoped

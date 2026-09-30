@@ -758,6 +758,49 @@ reports read this same data, so a shaky source was worth fixing first.
   the default (cashier-facing) `GET /api/products` response while still
   showing up with `includeInactive=true`.
 
+### Bug fix — orphaned Draft Order permanently occupies its Table
+
+Reported by the project owner after live-using the Day 2 flow: tapping into a
+Table just to look (not to seat a party) left it stuck `Occupied` forever, even
+after backing out without ordering anything.
+
+- **Root cause**: `TablesController.Create` claims the Table (`Available` →
+  `Occupied`) the instant an Order is created — correct for an actual "seat a
+  party" action, but `TablesPage.handleTableClick` calls `createOrder` on
+  *every* tap of an `Available` tile, including a cashier just checking what's
+  on a table. There was no way to abandon that Order afterward: `Void` only
+  works on `Completed` orders (PIN-gated, reverses a settled sale), and
+  nothing existed for a pre-checkout Draft/Open order with nothing to reverse
+  (no Payment, no Stock movement, no Journal entry — Checkout is the only
+  thing that touches any of those).
+- **Fix**: new `OrderStatus.Cancelled` value and `POST /api/orders/{id}/cancel`
+  — atomically claims `Draft`/`Open` → `Cancelled` (same guarded-transition
+  pattern as every other status change in this controller) and releases the
+  Table in the same request. No PIN/role gate, unlike Void: cancelling can
+  only ever discard an order nobody has paid for, so it isn't a sensitive
+  action. Frontend: a "Batal Order" button on `OrderPage` while the order is
+  still Draft/Open.
+- **Also fixed the same session**: Checkout previously redirected straight
+  back to `TablesPage` the instant payment succeeded, with zero confirmation
+  — reported as QRIS "just blinking" (Cash had the identical behavior, but it
+  read as more obviously broken for QRIS since there's no real scan/gateway
+  step to visually anchor the wait, see the "QRIS-manual" note in the Payment
+  section above). `OrderPage` now shows a payment-confirmation screen (amount
+  + method) with an explicit "Kembali ke Meja" button instead of navigating
+  immediately.
+- **Dev-data cleanup**: while investigating, found several `Table`s (`6`, `8`)
+  already stuck `Occupied` by empty Draft Orders from earlier sessions —
+  pre-existing instances of this same bug, not new occurrences. Cancelled them
+  via the new endpoint once it shipped. Also bulk-deleted the accumulated
+  stress/race/load-test fixture data (`RaceTest-*`, `StressTest-*`,
+  `LoadTest-*`, `IdempotencyTest-*`, `Scarce/PlentifulIngredient-*`, etc. —
+  see the Concurrency section below for what generated them) from the dev
+  Postgres via a one-off transactional SQL script, in dependency order
+  (children before parents, reversal `JournalEntry` rows before the ones they
+  reverse). Not a schema or code change — just clearing accumulated test
+  noise so the UI reflects only real menu/catalog data during manual
+  end-to-end testing.
+
 ### JWT `sub` claim silently disappears
 ASP.NET Core's `JwtBearerHandler` remaps short claim types (`sub`, `role`, ...) to
 long XML-schema URIs by default when validating an incoming token
