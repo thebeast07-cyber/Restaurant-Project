@@ -896,6 +896,49 @@ Dropped into all three pickers (`ProductsAdminPage`'s recipe editor,
     it — use `AsNoTracking()` (or re-attach/reload explicitly) for anything read back
     afterward.
 
+### Web UI — Day 5 (Phase 4: Reporting Dashboard)
+
+Completes roadmap Phase 4. All three report endpoints (`sales-daily`,
+`stock-levels`, `waste`) already existed and needed zero backend changes —
+this was purely a frontend pass over already-correct, already-tested
+aggregates.
+
+- **`ReportsPage`**, one page, three cards, matching the design agreed before
+  building (no separate sub-routes — each card is light enough not to need
+  its own navigation level):
+  - **Penjualan Harian**: date picker (defaults to today), completed/voided
+    order counts, Cash/Non-Cash/Total revenue.
+  - **Level Stok**: full ingredient table with a "Rendah" badge on rows
+    below `MinimumStock` — reuses the exact badge/table classes already
+    established in `IngredientsPage` (`purchasing-table`,
+    `purchasing-badge--warn`) rather than inventing new ones.
+  - **Waste Bulanan**: month/year picker (defaults to current month),
+    per-ingredient quantity + value lost, total at the bottom. Empty state
+    ("Tidak ada waste bulan ini") verified live against a month with no
+    waste movements.
+- Gated Owner/Manager only, matching the backend's
+  `[Authorize(Roles = "Owner,Manager")]` on the whole `ReportsController` —
+  same pattern as `PurchaseRequestsPage`: the role check happens *before*
+  the `useEffect`s fire, so a Cashier's browser never calls the report
+  endpoints at all (would 403 anyway, but the point is not to fire a
+  request that's going to fail). First pass skipped this and let the 403
+  surface as a raw "Request failed with status 403" — caught during live
+  verification, fixed to match the existing page-level gate pattern instead
+  of inventing a new one.
+- Verified live: Owner sees all three cards populate with real data
+  (matched a manual checkout done earlier in the same session); switching
+  the sales-daily date to a day with no orders correctly zeroes every
+  field instead of erroring; switching the waste month to one with no
+  waste movements shows the empty state, not a crash; Cashier gets the
+  "khusus Manager/Owner" message with no network call, both via direct
+  navigation and via the Dashboard (no "Laporan" link shown at all).
+- **Not done, deliberately split into its own phase**: charts, export
+  (PDF/Excel), and period-over-period comparison — raised during the design
+  discussion for this phase, but none of the three report endpoints carry
+  the data those need (e.g. comparison needs a date-range query, not a
+  single date/month). Tracked as Phase 7 in `02-ui-roadmap.md`, not scoped
+  yet.
+
 ## Gotchas (bugs already hit — read before you hit them again)
 
 ### JWT `sub` claim silently disappears

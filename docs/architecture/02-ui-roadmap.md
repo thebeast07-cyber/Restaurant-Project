@@ -147,6 +147,18 @@ Not started, not urgent, each gated on an external decision:
   accuracy turns out to be insufficient in practice; see `implementation-notes.md`
   for why Weighted-Average was chosen first.
 
+### Phase 7 — Reporting Enhancements (Charts, Export, Period Comparison)
+- Raised during the Phase 4 design discussion (2026-09-30): the owner wants charts,
+  export (PDF/Excel), and period-over-period comparison on top of the Phase 4
+  reports. Deliberately split into its own phase rather than folded into Phase 4 —
+  none of the three existing report endpoints (`sales-daily`, `stock-levels`,
+  `waste`) carry the data these need (e.g. period comparison needs a date-range
+  query, not just a single date/month), so this needs its own backend design pass,
+  not just a frontend addition.
+- Not scoped in detail yet — needs its own "discuss the approach, agree, then
+  build" pass same as every other phase, once Phase 4 ships and it's clear what
+  shape of chart/export is actually wanted.
+
 ### Not Planned (P1/P2/P3 — explicitly out of scope for this roadmap)
 HR/attendance, CRM/loyalty, Promotion, multi-branch admin UI, custom RBAC builder,
 Production (raw→semi-finished conversion), Batch/Serial tracking, Marketplace/

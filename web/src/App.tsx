@@ -12,6 +12,7 @@ import { PurchasesPage } from "./pages/PurchasesPage";
 import { MenuPage } from "./pages/MenuPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
 import { ProductsAdminPage } from "./pages/ProductsAdminPage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
 function App() {
@@ -31,6 +32,7 @@ function App() {
         <Route path="/menu" element={<MenuPage />} />
         <Route path="/menu/categories" element={<CategoriesPage />} />
         <Route path="/menu/products" element={<ProductsAdminPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
