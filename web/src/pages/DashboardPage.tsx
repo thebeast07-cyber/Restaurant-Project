@@ -30,6 +30,11 @@ export function DashboardPage() {
         <button type="button" onClick={() => navigate("/shift")}>
           Shift
         </button>
+        {(user?.role === "Owner" || user?.role === "Manager") && (
+          <button type="button" onClick={() => navigate("/purchasing")}>
+            Purchasing
+          </button>
+        )}
       </nav>
     </main>
   );

@@ -38,8 +38,16 @@ public class PurchasesController : ControllerBase
             .OrderByDescending(p => p.CreatedAt)
             .ToListAsync();
 
-        var response = await Task.WhenAll(purchases.Select(p => BuildResponseAsync(p, journalEntryId: null)));
-        return Ok(response.ToList());
+        // Sequential, not Task.WhenAll — same DbContext thread-safety issue as
+        // PurchaseRequestsController.List (see comment there): BuildResponseAsync
+        // queries the shared _db, so running it concurrently for multiple Purchases
+        // throws once List has 2+ rows to build.
+        var response = new List<PurchaseResponse>();
+        foreach (var purchase in purchases)
+        {
+            response.Add(await BuildResponseAsync(purchase, journalEntryId: null));
+        }
+        return Ok(response);
     }
 
     /// <summary>

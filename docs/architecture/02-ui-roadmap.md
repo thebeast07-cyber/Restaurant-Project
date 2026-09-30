@@ -68,13 +68,15 @@ dev API, not just compiled.
   already carry a `Station` (Kitchen/Bar) and `POST /api/orders/{id}/send-to-station`
   already formats the ticket text; all that's left is the printer adapter.
 
-### Phase 3 — Back-Office: Purchasing & Suppliers
+### Phase 3 — Back-Office: Purchasing & Suppliers — **Done**
 - Supplier management, Purchase Request creation (Manager) + Approval (Owner),
   recording a Purchase, recording Purchase Payments.
 - Stock Adjustment/Opname screen, Waste recording.
-- This phase can lag behind Phase 1-2 without blocking daily sales operation — a
-  Manager/Owner could still use `curl`/Postman for Purchasing a while longer if
-  Phase 1 ships first and this needs more time.
+- Built Day 3 (2026-09-29) — see `implementation-notes.md`'s "Web UI — Day 3"
+  section for what was built, two pre-existing backend concurrency bugs found
+  and fixed along the way, and what's deliberately still deferred (menu/recipe
+  CRUD — raised mid-session, scoped to its own follow-up discussion rather than
+  folded in here).
 
 ### Phase 4 — Reporting Dashboard
 - Daily sales, stock levels (with low-stock flagging), monthly waste value.

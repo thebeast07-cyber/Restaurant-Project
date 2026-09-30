@@ -572,6 +572,132 @@ frontend code (see roadmap §2): **web app, React + Vite, single office-LAN serv
   rendered correctly (`prefers-color-scheme`, never forced) — all via an actual
   browser session against the running dev servers, not just a build that compiled.
 
+### Web UI — Day 2 (rest of Phase 1: Shift, Tables, Order/Cart, Checkout, Void)
+
+Completes [`02-ui-roadmap.md`](../architecture/02-ui-roadmap.md)'s Phase 1 — the
+core sales loop a Cashier needs to run a shift without `curl`. Built against the
+existing API 1:1, no backend behavior changes beyond one small contract addition
+(below).
+
+- **`ShiftPage`**: one screen, two modes driven by `GET /api/shifts/current` (open
+  shift → close form with cash reconciliation summary; no open shift → open form).
+  A shift is a per-user singleton (enforced by the backend's partial unique index,
+  see Concurrency below) — this page doesn't need its own concurrency handling,
+  just surfaces the 409/400 the API already returns.
+- **`TablesPage`**: grid of tables from `GET /api/tables`, colored by `Status`.
+  Tapping an `Available` tile calls `POST /api/orders` with that `TableId` and
+  navigates into `OrderPage`; tapping an `Occupied` tile resumes the existing order.
+  **Backend addition**: `TableResponse` gained `CurrentOrderId` (nullable) —
+  `Table.Status` alone doesn't say *which* Order occupies it, so resuming an
+  occupied table's cart needed the active Order's id. `TablesController.List` now
+  joins `Orders` where `Status` is `Draft` or `Open` (the two pre-checkout
+  statuses) per `TableId`. This is additive (new response field, same endpoint),
+  not a new domain, so it didn't need its own roadmap discussion pass.
+- **`OrderPage`**: category tabs (`GET /api/categories`) filter a product grid
+  (`GET /api/products`); tapping a product calls `POST /api/orders/{id}/items`
+  with `Quantity: 1` and re-renders the cart from the response `Order` (the API
+  is the source of truth for the cart, not local state — avoids the cart drifting
+  out of sync with server-computed `Subtotal`/`TotalAmount`). Checkout buttons
+  call `POST /api/orders/{id}/checkout` with `Cash` or `Qris` and return to
+  `TablesPage` on success (table is freed server-side as part of that same
+  transaction, so no client-side table-state juggling needed). A `Completed`
+  order shows a Void trigger instead of the cart, gated client-side on
+  `role in [Owner, Manager]` — matches the backend's `[Authorize(Roles = "Owner,
+  Manager")]` on `POST /api/orders/{id}/void`; the client check is only a UX
+  nicety (hide a control a Cashier can't use), the backend role check is what
+  actually enforces it.
+- **Void modal**: PIN + optional reason, calls `POST /api/orders/{id}/void`. No
+  new PIN-verification logic on the frontend — the backend does the
+  `BCrypt.Verify` against `User.PinHash` and returns `401` on a wrong PIN, which
+  surfaces as the same inline error pattern used everywhere else.
+- **Dashboard** (Day 1's placeholder) now links into `/tables` and `/shift`
+  instead of the "fondasi Hari 1" placeholder text.
+- Fixed a pre-existing `tsc` build failure in `client.ts` (`ApiError`'s
+  constructor used a TS parameter-property shorthand that trips
+  `erasableSyntaxOnly` in this project's `tsconfig`) — unrelated to Day 2's
+  scope, but it blocked `npm run build` entirely so it had to be fixed to verify
+  anything.
+- Verified the full loop live against the dev API + Postgres (not just a
+  compile): open shift → seat a table → add item → checkout Cash → table freed →
+  void the completed order with the Owner's PIN → close shift, reconciliation
+  numbers matched the actual Confirmed payments for that shift.
+- **Not done in Day 2, still open**: Kitchen/Bar routing (`send-to-station`) has
+  no UI yet — deliberately deferred, it's gated on roadmap Decision #4 (KDS
+  screen vs. printed ticket), which is still open. Quantity is fixed at 1 per
+  tap (no quantity stepper or remove-item control on the cart) — smallest slice
+  that makes the sales loop usable; a fast-follow, not a scope gap that blocks
+  anything.
+
+### Web UI — Day 3 (Phase 3: Purchasing/Suppliers UI)
+
+Completes roadmap Phase 3 — Supplier, Ingredient (stock + Opname/ManualAdjustment/
+Waste), Purchase Request (create/approve/reject), and Purchase (record + partial
+payments), all built against the existing Purchasing-extension API 1:1.
+
+- **`/purchasing`** hub page links to four sub-screens (`SuppliersPage`,
+  `IngredientsPage`, `PurchaseRequestsPage`, `PurchasesPage`); only visible on the
+  Dashboard for Owner/Manager (Cashier has no use for any of it, and two of the
+  four endpoints are role-gated `[Authorize(Roles = "Owner,Manager")]` server-side
+  anyway — the Dashboard link and each page's own client-side role check are just
+  UX, not the actual enforcement).
+- **`SuppliersPage`**: list + create. Any authenticated role can list (read-only
+  for Cashier), create is Owner/Manager.
+- **`IngredientsPage`**: list with current stock, inline-editable minimum-stock
+  input (`onBlur` triggers `PUT .../minimum-stock`), and a "Sesuaikan Stok" modal
+  that maps to `POST .../stock-adjustment`'s two mutually-exclusive shapes —
+  Opname (absolute counted value) vs. a signed delta tagged `ManualAdjustment` or
+  `Waste`. The UI enforces the same "exactly one of the two" shape the backend
+  contract requires, so a bad combination never reaches the API.
+  A low-stock row (`currentStock < minimumStock`) gets a "Rendah" badge — reads
+  the same two fields `GET /api/reports/stock-level` (Phase 4, not built yet)
+  will eventually summarize, so this is a preview of that report at the row
+  level, not a separate calculation.
+- **`PurchaseRequestsPage`**: Manager sees a create form (`RequestedFor` +
+  ingredient lines), Owner sees Approve/Reject on `Pending` rows; both see the
+  full list. A Cashier hitting this route gets an inline "khusus Manager/Owner"
+  message client-side — the `useEffect` that calls `GET /api/purchase-requests`
+  is itself gated on role, so a Cashier's browser never even fires the request
+  that would 403.
+- **`PurchasesPage`**: record a Purchase (optionally linked to an `Approved`
+  request — the dropdown only lists `Approved` ones, since the backend rejects
+  anything else) with per-ingredient quantity/unit/unit-cost lines, and a
+  "Bayar" action per unpaid/partially-paid row that calls
+  `POST .../payments`. Whole controller is `[Authorize(Roles = "Owner,Manager")]`
+  server-side, so this page is the strictest of the four — gated the same way as
+  Purchase Requests.
+- **Backend bugs found and fixed while wiring this up** (both pre-existing,
+  neither introduced by the UI work — they'd have hit any caller that listed
+  2+ rows, `curl` included, but nothing before this had exercised that):
+  - `PurchaseRequestsController.List` and `PurchasesController.List` both built
+    their response with `Task.WhenAll(rows.Select(BuildResponseAsync))` —
+    running `BuildResponseAsync` concurrently for each row. `BuildResponseAsync`
+    queries the shared `_db` `DbContext`, which is **not thread-safe** for
+    concurrent operations on the same instance; EF Core throws `"A second
+    operation was started on this context instance before a previous operation
+    completed"` as soon as there are 2+ rows to build. Both fixed the same way:
+    a plain sequential `foreach` awaiting `BuildResponseAsync` one row at a
+    time instead of `Task.WhenAll`. **Pattern to watch for elsewhere in this
+    codebase**: never `Task.WhenAll` (or any concurrent-await) a set of calls
+    that all close over the same injected `DbContext` — DI registers it scoped
+    per-request, so nothing stops you from writing this bug, but EF Core will
+    throw at the first row count that overlaps two of those tasks in time.
+- Verified live: Manager creates a Purchase Request → Owner approves it →
+  Manager (or Owner) records a Purchase against it (auto-flips the request to
+  `Fulfilled`, increments stock, updates the Ingredient's weighted-average
+  cost) → partial payment recorded against the Purchase (`Unpaid` →
+  `PartiallyPaid`, remaining balance correct). Also verified Opname on an
+  existing Ingredient (Beras: 12800 → 12500 gram) updates the row without
+  touching `AverageCost` (Opname is a count correction, not a valued
+  movement — matches `IngredientsController.AdjustStock`'s existing comment on
+  this).
+- **Not done in Day 3, deferred by explicit agreement** (see
+  `docs/architecture/02-ui-roadmap.md`'s "Where We Are"): CRUD for the menu
+  itself (Category/Product + Recipe) — the backend only has Create + List for
+  both, no Update/Delete yet, and there's no UI for it either. Raised mid-Day-3
+  by the project owner; deliberately scoped out to keep this session's Purchasing
+  work from sprawling into a second domain that also needs new backend
+  endpoints. Next thing to discuss once Phase 3 ships.
+
 ### JWT `sub` claim silently disappears
 ASP.NET Core's `JwtBearerHandler` remaps short claim types (`sub`, `role`, ...) to
 long XML-schema URIs by default when validating an incoming token

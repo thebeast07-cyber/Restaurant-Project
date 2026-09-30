@@ -1,0 +1,265 @@
+.purchasing-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.purchasing-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.purchasing-header h1 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.purchasing-back {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.purchasing-error {
+  margin-top: 16px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.purchasing-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 420px;
+  padding: 16px;
+  margin: 20px 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.purchasing-form h2 {
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+
+.purchasing-form label {
+  font-size: 13px;
+  color: var(--text);
+  margin-top: 10px;
+}
+
+.purchasing-form input,
+.purchasing-form select,
+.purchasing-form textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+}
+
+.purchasing-form button {
+  margin-top: 16px;
+  padding: 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-text);
+  cursor: pointer;
+}
+
+.purchasing-form button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.purchasing-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+  font-size: 13px;
+}
+
+.purchasing-table th,
+.purchasing-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.purchasing-table th {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.purchasing-table td {
+  color: var(--text-h);
+}
+
+.purchasing-line-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.purchasing-line-item {
+  display: grid;
+  grid-template-columns: 1fr 90px 90px auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.purchasing-line-item--purchase {
+  grid-template-columns: 1fr 90px 90px 110px auto;
+}
+
+.purchasing-line-item-remove {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--danger);
+  cursor: pointer;
+}
+
+.purchasing-add-line {
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.purchasing-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.purchasing-badge--positive {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.purchasing-badge--warn {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.purchasing-row-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.purchasing-row-actions button {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-h);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.purchasing-row-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.purchasing-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 40%);
+  padding: 24px;
+  z-index: 10;
+}
+
+.purchasing-modal {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.purchasing-modal h2 {
+  font-size: 16px;
+  margin: 0 0 4px;
+}
+
+.purchasing-modal-meta {
+  font-size: 13px;
+  color: var(--text);
+  margin: 0 0 8px;
+}
+
+.purchasing-modal label {
+  font-size: 13px;
+  color: var(--text);
+  margin-top: 10px;
+}
+
+.purchasing-modal input,
+.purchasing-modal select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+}
+
+.purchasing-modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.purchasing-modal-actions button {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.purchasing-modal-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.purchasing-modal-cancel {
+  background: var(--surface) !important;
+  color: var(--text-h) !important;
+  border: 1px solid var(--border) !important;
+}

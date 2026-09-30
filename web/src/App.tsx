@@ -4,6 +4,11 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { ShiftPage } from "./pages/ShiftPage";
 import { TablesPage } from "./pages/TablesPage";
 import { OrderPage } from "./pages/OrderPage";
+import { PurchasingPage } from "./pages/PurchasingPage";
+import { SuppliersPage } from "./pages/SuppliersPage";
+import { IngredientsPage } from "./pages/IngredientsPage";
+import { PurchaseRequestsPage } from "./pages/PurchaseRequestsPage";
+import { PurchasesPage } from "./pages/PurchasesPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
 function App() {
@@ -15,6 +20,11 @@ function App() {
         <Route path="/shift" element={<ShiftPage />} />
         <Route path="/tables" element={<TablesPage />} />
         <Route path="/orders/:orderId" element={<OrderPage />} />
+        <Route path="/purchasing" element={<PurchasingPage />} />
+        <Route path="/purchasing/suppliers" element={<SuppliersPage />} />
+        <Route path="/purchasing/ingredients" element={<IngredientsPage />} />
+        <Route path="/purchasing/requests" element={<PurchaseRequestsPage />} />
+        <Route path="/purchasing/purchases" element={<PurchasesPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
