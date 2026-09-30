@@ -49,4 +49,21 @@ public class CategoriesController : ControllerBase
 
         return Ok(new CategoryResponse(category.Id, category.Name));
     }
+
+    /// <summary>
+    /// Rename only — no Delete endpoint. Category.Id is a required FK on Product
+    /// (CategoryId), so a Category still referenced by any Product can't be removed
+    /// without either cascading or orphaning those Products; deferred rather than
+    /// building a "delete only if unused" guard nobody asked for yet.
+    /// </summary>
+    [HttpPut("{id:guid}")]
+    [Authorize(Roles = "Owner,Manager")]
+    public async Task<IActionResult> Update(Guid id, UpdateCategoryRequest request)
+    {
+        var updated = await _db.Categories
+            .Where(c => c.Id == id)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(c => c.Name, request.Name));
+
+        return updated == 0 ? NotFound() : NoContent();
+    }
 }

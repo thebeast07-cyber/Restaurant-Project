@@ -9,6 +9,9 @@ import { SuppliersPage } from "./pages/SuppliersPage";
 import { IngredientsPage } from "./pages/IngredientsPage";
 import { PurchaseRequestsPage } from "./pages/PurchaseRequestsPage";
 import { PurchasesPage } from "./pages/PurchasesPage";
+import { MenuPage } from "./pages/MenuPage";
+import { CategoriesPage } from "./pages/CategoriesPage";
+import { ProductsAdminPage } from "./pages/ProductsAdminPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
 function App() {
@@ -25,6 +28,9 @@ function App() {
         <Route path="/purchasing/ingredients" element={<IngredientsPage />} />
         <Route path="/purchasing/requests" element={<PurchaseRequestsPage />} />
         <Route path="/purchasing/purchases" element={<PurchasesPage />} />
+        <Route path="/menu" element={<MenuPage />} />
+        <Route path="/menu/categories" element={<CategoriesPage />} />
+        <Route path="/menu/products" element={<ProductsAdminPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

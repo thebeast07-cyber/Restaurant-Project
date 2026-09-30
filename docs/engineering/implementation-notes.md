@@ -698,6 +698,66 @@ payments), all built against the existing Purchasing-extension API 1:1.
   work from sprawling into a second domain that also needs new backend
   endpoints. Next thing to discuss once Phase 3 ships.
 
+### Web UI — Day 4 (Menu CRUD: Category rename, Product + Recipe edit)
+
+Picked up the Day 3 deferral above immediately, by explicit agreement, once the
+owner asked how Recipe ties into stock deduction (confirmed: `RecipeItem` maps
+Product → Ingredient quantities, and `Checkout` reads it to compute how much of
+each Ingredient a sale consumes — see `OrdersController.Checkout` step 1-2, unchanged
+by this work). Since correcting a wrong recipe or price previously required
+editing the database directly, this was scoped ahead of Phase 4 (Reporting) —
+reports read this same data, so a shaky source was worth fixing first.
+
+- **New backend endpoints** (`Owner,Manager` only, matching Create's existing
+  gate):
+  - `PUT /api/categories/{id}` — rename only, no Delete. `Product.CategoryId` is
+    a required FK, so a Category still referenced by any Product can't be
+    removed without cascading or orphaning — deferred rather than building an
+    unused "delete only if empty" guard.
+  - `PUT /api/products/{id}` — updates Name/CategoryId/Price/Station/IsActive
+    and replaces the Recipe wholesale (delete all existing `RecipeItem` rows,
+    insert the ones given) rather than diffing line-by-line; a menu item's
+    recipe is small and edited as a whole in the UI.
+  - **No hard Delete for Product.** `Product.Id` is a required FK on both
+    `OrderItem` and `RecipeItem` — a Product that has ever been ordered can't
+    be removed without breaking that order's history. `IsActive` (already on
+    the entity since Day 1 of the catalog) is the only safe removal path;
+    `ProductsController.List` already filtered on it, so deactivating a
+    product now correctly makes it disappear from the cashier's menu
+    immediately. `List` gained an `includeInactive` query flag so the new
+    admin UI can still see (and reactivate) deactivated products — the
+    cashier-facing call omits it and keeps seeing only active ones.
+  - **Bug caught before it shipped**: the first version of `Update` called
+    `product.RecipeItems.Add(new RecipeItem {...})` for the replacement
+    lines — this is the exact "adding a child to an already-tracked parent's
+    collection doesn't reliably mark it Added" gotcha already written up
+    earlier in this file (from Day 5-ish), and it reproduced immediately: a
+    live edit through the UI threw `DbUpdateConcurrencyException` ("expected
+    to affect 1 row, but affected 0"), because EF Core generated an `UPDATE`
+    for a `RecipeItem` row that didn't exist yet instead of an `INSERT`.
+    Fixed the same way the existing writeup prescribes: add the new items to
+    `_db.RecipeItems` directly instead of the navigation collection. Confirms
+    that gotcha is a real, currently-live trap in this codebase, not just
+    historical.
+- **Frontend**: `/menu` hub linking to `CategoriesPage` (list, create, inline
+  rename) and `ProductsAdminPage` (list including inactive, create form, and
+  an edit modal reusing the same recipe-line editor UI pattern as
+  `PurchaseRequestsPage`/`PurchasesPage`'s ingredient-line editors — pick an
+  Ingredient, quantity, unit auto-filled from the Ingredient's own unit).
+  Dashboard link and both pages' create/edit controls are gated to
+  Owner/Manager client-side, matching the backend's actual enforcement.
+- **Verified live, not just that the form saves**: edited Nasi Goreng Ayam's
+  price (Rp25.000 → Rp27.000) through the UI, confirmed via direct API read
+  that its Recipe still had exactly 3 lines (Ayam/Telur/Beras, no duplicates
+  or stale rows) after the replace, then ran a full Checkout against a fresh
+  Order for that product — stock deduction (`Ayam` −80g, matching the
+  Recipe) and the charged total (Rp27.000, the new price) were both correct,
+  confirming an edited Recipe still drives Checkout's stock math correctly,
+  not just that the edit screen displays right. Also deactivated Es Teh Manis
+  through the UI and confirmed via direct API read that it disappeared from
+  the default (cashier-facing) `GET /api/products` response while still
+  showing up with `includeInactive=true`.
+
 ### JWT `sub` claim silently disappears
 ASP.NET Core's `JwtBearerHandler` remaps short claim types (`sub`, `role`, ...) to
 long XML-schema URIs by default when validating an incoming token

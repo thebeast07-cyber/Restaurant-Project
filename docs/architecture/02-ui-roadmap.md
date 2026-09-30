@@ -4,7 +4,7 @@
 > complete, the same way `implementation-notes.md` tracks reality against
 > `01-mvp-technical-design.md`'s original plan.
 
-## 0. Where We Are
+## 0. Where We Are (updated after Day 4)
 
 Backend MVP sprint (14 days, see `01-mvp-technical-design.md` §4) is done and
 concurrency-hardened — see [`go-live-checklist.md`](../engineering/go-live-checklist.md)
@@ -38,7 +38,7 @@ begins:
 | 1 | **Platform**: web (responsive, runs in a browser on any device) vs. dedicated tablet app (Android/iOS) vs. desktop app | Changes framework choice, deployment story, and whether staff need a specific device | **Open** |
 | 2 | **Frontend framework** (if web): React, Blazor (pairs naturally with the existing ASP.NET Core backend), plain HTML/JS, etc. | Affects dev speed and who can maintain it later | **Open**, depends on #1 |
 | 3 | **Hosting/deployment** for the UI | Local network only (POS terminal + LAN) vs. cloud-accessible | **Open** |
-| 4 | Does Kitchen/Bar need their own screen (a KDS-style ticket display), or is a printed ticket (once the printer is wired) sufficient for v1? | Changes Phase 2 scope significantly | **Open** |
+| 4 | Does Kitchen/Bar need their own screen (a KDS-style ticket display), or is a printed ticket (once the printer is wired) sufficient for v1? | Changes Phase 2 scope significantly | **Resolved (2026-09-29): printed ticket for v1** — no KDS screen for now, cheaper hardware (just a thermal printer) and familiar to kitchen staff already used to working off paper. Revisit KDS later if paper turns out to be a bottleneck. |
 
 **Recommendation**: resolve #1-#3 together as one conversation before writing any
 frontend code — they're coupled (e.g. "tablet app" implies native or a
@@ -77,6 +77,21 @@ dev API, not just compiled.
   and fixed along the way, and what's deliberately still deferred (menu/recipe
   CRUD — raised mid-session, scoped to its own follow-up discussion rather than
   folded in here).
+
+### Menu CRUD (Category rename, Product + Recipe edit) — **Done**, not originally a numbered phase
+- Added Day 4 (2026-09-29), picked up immediately after the Day 3 deferral
+  above once the owner asked how Recipe ties into stock deduction. Scoped
+  ahead of Phase 4 (Reporting) since reports read this same data.
+- New endpoints: `PUT /api/categories/{id}` (rename only), `PUT
+  /api/products/{id}` (full update incl. wholesale Recipe replace). No hard
+  Delete for either — Product uses its existing `IsActive` flag as the safe
+  removal path (Product.Id is a required FK on order history), Category is
+  rename-only (Product.CategoryId is a required FK). See
+  `implementation-notes.md`'s "Web UI — Day 4" section for what was built, a
+  live EF Core bug caught before shipping, and end-to-end verification
+  (edited a product's price+recipe through the UI, then ran an actual
+  Checkout to confirm the edited Recipe still drives stock deduction
+  correctly).
 
 ### Phase 4 — Reporting Dashboard
 - Daily sales, stock levels (with low-stock flagging), monthly waste value.

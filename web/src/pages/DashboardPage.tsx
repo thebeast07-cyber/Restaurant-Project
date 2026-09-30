@@ -31,9 +31,14 @@ export function DashboardPage() {
           Shift
         </button>
         {(user?.role === "Owner" || user?.role === "Manager") && (
-          <button type="button" onClick={() => navigate("/purchasing")}>
-            Purchasing
-          </button>
+          <>
+            <button type="button" onClick={() => navigate("/purchasing")}>
+              Purchasing
+            </button>
+            <button type="button" onClick={() => navigate("/menu")}>
+              Menu
+            </button>
+          </>
         )}
       </nav>
     </main>

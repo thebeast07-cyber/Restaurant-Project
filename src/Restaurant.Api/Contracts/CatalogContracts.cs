@@ -4,6 +4,7 @@ namespace Restaurant.Api.Contracts;
 
 public record CategoryResponse(Guid Id, string Name);
 public record CreateCategoryRequest(string Name);
+public record UpdateCategoryRequest(string Name);
 
 public record IngredientResponse(Guid Id, string Name, string Unit, decimal CurrentStock, decimal MinimumStock, decimal AverageCost);
 public record CreateIngredientRequest(string Name, string Unit, decimal MinimumStock = 0);
@@ -27,3 +28,11 @@ public record ProductResponse(
     Station Station,
     bool IsActive,
     List<RecipeItemResponse> RecipeItems);
+
+public record UpdateProductRequest(
+    string Name,
+    Guid CategoryId,
+    decimal Price,
+    Station Station,
+    bool IsActive,
+    List<RecipeItemRequest> RecipeItems);
