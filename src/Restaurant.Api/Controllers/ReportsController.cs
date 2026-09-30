@@ -140,4 +140,169 @@ public class ReportsController : ControllerBase
 
         return Ok(new WasteReportResponse(targetYear, targetMonth, items.Sum(i => i.WasteValue), items));
     }
+
+    /// <summary>
+    /// Phase 7 (charts/comparison): same revenue logic as <see cref="SalesDaily"/>,
+    /// just grouped by day across a range instead of one query per day — the
+    /// frontend calls this once for a trend chart, and twice (two ranges) for
+    /// period-over-period comparison, diffing client-side. No new state, still a
+    /// read-only aggregate.
+    /// </summary>
+    [HttpGet("sales-range")]
+    public async Task<ActionResult<SalesRangeResponse>> SalesRange([FromQuery] DateOnly from, [FromQuery] DateOnly to)
+    {
+        if (to < from)
+        {
+            return BadRequest(new { message = "'to' must not be before 'from'." });
+        }
+
+        var rangeStart = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var rangeEndExclusive = new DateTimeOffset(to.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero).AddDays(1);
+
+        var ordersInRange = await _db.Orders
+            .Where(o => o.CreatedAt >= rangeStart && o.CreatedAt < rangeEndExclusive
+                && (o.Status == OrderStatus.Completed || o.Status == OrderStatus.Voided))
+            .Select(o => new { o.Id, o.CreatedAt, o.Status })
+            .ToListAsync();
+
+        var completedOrderIds = ordersInRange.Where(o => o.Status == OrderStatus.Completed).Select(o => o.Id).ToList();
+
+        var confirmedPayments = await _db.Payments
+            .Where(p => p.Status == PaymentStatus.Confirmed && completedOrderIds.Contains(p.OrderId))
+            .Join(_db.PaymentMethods, p => p.PaymentMethodId, m => m.Id, (p, m) => new { p.OrderId, p.Amount, m.Code })
+            .ToListAsync();
+
+        var ordersById = ordersInRange.ToDictionary(o => o.Id);
+
+        var days = new List<SalesDailyReportResponse>();
+        for (var date = from; date <= to; date = date.AddDays(1))
+        {
+            var dayOrders = ordersInRange.Where(o => DateOnly.FromDateTime(o.CreatedAt.UtcDateTime) == date).ToList();
+            var completedCount = dayOrders.Count(o => o.Status == OrderStatus.Completed);
+            var voidedCount = dayOrders.Count(o => o.Status == OrderStatus.Voided);
+
+            var dayPayments = confirmedPayments.Where(p => ordersById.TryGetValue(p.OrderId, out var o)
+                && DateOnly.FromDateTime(o.CreatedAt.UtcDateTime) == date).ToList();
+            var cashTotal = dayPayments.Where(p => p.Code == PaymentMethodCode.Cash).Sum(p => p.Amount);
+            var nonCashTotal = dayPayments.Where(p => p.Code != PaymentMethodCode.Cash).Sum(p => p.Amount);
+
+            days.Add(new SalesDailyReportResponse(date, completedCount, voidedCount, cashTotal, nonCashTotal, cashTotal + nonCashTotal));
+        }
+
+        return Ok(new SalesRangeResponse(from, to, days));
+    }
+
+    /// <summary>
+    /// Phase 7: same aggregation as <see cref="Waste"/>, grouped by month across a
+    /// range instead of one call per month.
+    /// </summary>
+    [HttpGet("waste-range")]
+    public async Task<ActionResult<WasteRangeResponse>> WasteRange([FromQuery] DateOnly from, [FromQuery] DateOnly to)
+    {
+        if (to < from)
+        {
+            return BadRequest(new { message = "'to' must not be before 'from'." });
+        }
+
+        var rangeStart = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var rangeEndExclusive = new DateTimeOffset(to.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero).AddDays(1);
+
+        var wasteMovements = await _db.StockMovements
+            .Where(m => m.Reason == StockMovementReason.Waste && m.CreatedAt >= rangeStart && m.CreatedAt < rangeEndExclusive)
+            .Select(m => new { m.ChangeQuantity, m.UnitCostAtTime, m.CreatedAt })
+            .ToListAsync();
+
+        var months = new List<WasteRangeItem>();
+        for (var month = new DateOnly(from.Year, from.Month, 1); month <= to; month = month.AddMonths(1))
+        {
+            var monthTotal = wasteMovements
+                .Where(m => m.CreatedAt.Year == month.Year && m.CreatedAt.Month == month.Month)
+                .Sum(m => -m.ChangeQuantity * (m.UnitCostAtTime ?? 0m));
+            months.Add(new WasteRangeItem(month.Year, month.Month, monthTotal));
+        }
+
+        return Ok(new WasteRangeResponse(from, to, months));
+    }
+
+    /// <summary>
+    /// Phase 7: reconstructs a daily stock-balance series per Ingredient from the
+    /// StockMovement ledger — there's no separate stock-history table, so "what was
+    /// the balance on day X" is derived by walking the ledger, not read directly.
+    ///
+    /// Math: currentStock (Stock.Quantity, always "now") minus the sum of every
+    /// movement that happened strictly after `from`'s start gives the balance
+    /// exactly as it stood at the start of `from` — every later movement is what
+    /// turned that starting balance into today's currentStock, so subtracting all of
+    /// them "rewinds" it. This requires movements all the way up to *now*, not just
+    /// up to `to` — a movement between `to` and today still happened "after `from`"
+    /// and must be rewound too, even though it falls outside the visible range.
+    /// From that starting balance, the series for [from, to] is then walked forward
+    /// day by day using only the movements that actually fall inside the range.
+    ///
+    /// NetChangePerDay is (endBalance - startBalance) / days — the net trend over the
+    /// range, not gross consumption. A Purchase and a Sale on the same ingredient
+    /// partially offset in this number by design: what matters operationally is
+    /// whether the ingredient is trending down overall, not a breakdown of why.
+    /// BelowMinimumDays only counts days where MinimumStock > 0 (an unconfigured
+    /// threshold, same "0 means not configured" rule as every other report here).
+    /// </summary>
+    [HttpGet("stock-trend")]
+    public async Task<ActionResult<StockTrendResponse>> StockTrend([FromQuery] DateOnly from, [FromQuery] DateOnly to)
+    {
+        if (to < from)
+        {
+            return BadRequest(new { message = "'to' must not be before 'from'." });
+        }
+
+        var rangeStart = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var rangeEndExclusive = new DateTimeOffset(to.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero).AddDays(1);
+
+        var ingredients = await _db.Ingredients
+            .OrderBy(i => i.Name)
+            .Select(i => new { i.Id, i.Name, i.Unit, i.MinimumStock })
+            .ToListAsync();
+
+        var currentStocks = await _db.Stocks
+            .ToDictionaryAsync(s => s.IngredientId, s => s.Quantity);
+
+        var movementsSinceFrom = await _db.StockMovements
+            .Where(m => m.CreatedAt >= rangeStart)
+            .Select(m => new { m.IngredientId, m.ChangeQuantity, m.CreatedAt })
+            .OrderBy(m => m.CreatedAt)
+            .ToListAsync();
+
+        var items = new List<StockTrendItem>();
+        foreach (var ingredient in ingredients)
+        {
+            var currentStock = currentStocks.GetValueOrDefault(ingredient.Id, 0m);
+            var ingredientMovements = movementsSinceFrom.Where(m => m.IngredientId == ingredient.Id).ToList();
+
+            var startBalance = currentStock - ingredientMovements.Sum(m => m.ChangeQuantity);
+
+            var series = new List<StockTrendPoint>();
+            var runningBalance = startBalance;
+            var belowMinimumDays = 0;
+            for (var date = from; date <= to; date = date.AddDays(1))
+            {
+                var dayChange = ingredientMovements
+                    .Where(m => DateOnly.FromDateTime(m.CreatedAt.UtcDateTime) == date)
+                    .Sum(m => m.ChangeQuantity);
+                runningBalance += dayChange;
+                series.Add(new StockTrendPoint(date, runningBalance));
+                if (ingredient.MinimumStock > 0 && runningBalance < ingredient.MinimumStock)
+                {
+                    belowMinimumDays++;
+                }
+            }
+
+            var numberOfDays = to.DayNumber - from.DayNumber + 1;
+            var netChangePerDay = numberOfDays > 0 ? (runningBalance - startBalance) / numberOfDays : 0m;
+
+            items.Add(new StockTrendItem(
+                ingredient.Id, ingredient.Name, ingredient.Unit, ingredient.MinimumStock,
+                belowMinimumDays, netChangePerDay, series));
+        }
+
+        return Ok(new StockTrendResponse(from, to, items));
+    }
 }

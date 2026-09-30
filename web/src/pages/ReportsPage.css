@@ -83,3 +83,72 @@
   font-weight: 600;
   color: var(--text-h);
 }
+
+.reports-trend-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.reports-trend-header h2 {
+  font-size: 14px;
+  margin: 0;
+}
+
+.reports-trend-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.reports-trend-controls input[type="date"] {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+}
+
+.reports-compare-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.reports-chart-caption {
+  margin: 16px 0 4px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.reports-delta {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.reports-delta strong {
+  color: var(--text-h);
+}
+
+.reports-export-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.reports-export-buttons button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-h);
+  cursor: pointer;
+  font-size: 12px;
+}

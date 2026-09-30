@@ -939,6 +939,71 @@ aggregates.
   single date/month). Tracked as Phase 7 in `02-ui-roadmap.md`, not scoped
   yet.
 
+### Web UI — Day 6 (Phase 7: Reporting Enhancements — charts, export, comparison)
+
+Completes the scope agreed on 2026-09-30 (see `02-ui-roadmap.md`'s Phase 7): charts
+on all three Phase 4 reports, Excel/CSV/PDF export, and automatic this-period-vs-
+previous-period comparison — including for Stock Levels, which was originally an
+open question and got resolved (owner wants both frequency *and* depletion-rate
+charts, and wants comparison for Stock too, not just Sales/Waste).
+
+- **Three new backend endpoints**, all read-only aggregates over existing data —
+  no new tables, no new invariants:
+  - `GET /api/reports/sales-range?from=&to=` — same per-day revenue logic as
+    `sales-daily`, just returned as one row per day across a range instead of one
+    call per day from the frontend.
+  - `GET /api/reports/waste-range?from=&to=` — same monthly aggregation as
+    `waste`, grouped across a range of months instead of one call per month.
+  - `GET /api/reports/stock-trend?from=&to=` — the interesting one. There's no
+    stock-history table; a daily balance series per Ingredient is *reconstructed*
+    from the `StockMovement` ledger: `currentStock` (always "now") minus every
+    movement that happened after `from`'s start gives the balance exactly as it
+    stood at the start of `from` (every later movement is what turned that
+    starting balance into today's `currentStock`, so subtracting all of them
+    "rewinds" it) — this needs movements all the way up to *today*, not just up
+    to `to`, since a movement between `to` and today still happened "after
+    `from`" and must be rewound too. From that starting balance, the visible
+    series is walked forward day-by-day using only movements inside `[from, to]`.
+    Returns, per Ingredient: `belowMinimumDays` (days where the reconstructed
+    balance was under `MinimumStock`, only counted when a threshold is actually
+    configured — same "0 means not configured" rule as every other stock report)
+    and `netChangePerDay` ((endBalance − startBalance) / days — a *net* trend,
+    not gross consumption; a Purchase and a Sale on the same day partially offset
+    by design, since what matters operationally is whether the ingredient is
+    trending down overall, not a breakdown of why).
+  - Comparison ("this period vs. previous") needed no new endpoint for any of the
+    three — the frontend just calls the same range endpoint twice (current range,
+    and an equal-length immediately-preceding range) and diffs client-side.
+  - Verified live via `curl`: `stock-trend` against real dev data correctly
+    reconstructed Telur's balance dropping 100 → 92 across 3 days (matching what
+    the UI had shown), and temporarily setting Telur's `MinimumStock` to 95
+    correctly flagged `belowMinimumDays: 2` (the two days its reconstructed
+    balance was 93/92, not the one day it was still 100) — confirms the ledger
+    rewind math, not just that it returns *a* number.
+- **Frontend**: extended `ReportsPage` (not a new route) with a "Tren ..." card
+  under each of the three Phase 4 point-in-time cards — date-range pickers, a
+  "Bandingkan periode sebelumnya" checkbox, a Chart.js line/bar chart, and Excel/
+  CSV/PDF export buttons (new `web/src/lib/export.ts` helper, new `chart.js`,
+  `xlsx`, `jspdf`, `jspdf-autotable` dependencies). New reusable `ReportChart`
+  component wraps Chart.js directly (no `react-chartjs-2` wrapper — one extra
+  dependency avoided for what's a thin `useEffect` + `useRef` either way).
+  - **Known, accepted supply-chain note**: the npm-published `xlsx` (SheetJS)
+    package is frozen at 0.18.5 and carries two disclosed CVEs (prototype
+    pollution, ReDoS) — both in the *parsing* path (`XLSX.read`/`readFile`).
+    This app only ever calls `XLSX.utils.json_to_sheet`/`writeFile` on data it
+    already fetched and rendered itself — never on a user-supplied file — so the
+    vulnerable code path is never reached. Documented in `export.ts` directly so
+    this isn't re-discovered as a surprise later.
+- Gated the same Owner/Manager check as the rest of the page (no separate
+  gate needed — the new cards live inside the same already-gated component).
+- Verified live: sales trend chart matched the manual-checkout total from an
+  earlier session; toggling comparison correctly showed a second series and a
+  delta line; stock trend's two charts (frequency, net-change) rendered
+  per-ingredient bars matching the `stock-trend` API values exactly; waste trend
+  correctly showed Rp0 bars for empty months and the real total for September;
+  all three Export buttons (Excel/CSV/PDF) fired without a console error or a
+  page crash on every card.
+
 ## Gotchas (bugs already hit — read before you hit them again)
 
 ### JWT `sub` claim silently disappears
