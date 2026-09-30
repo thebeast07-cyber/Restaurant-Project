@@ -1,0 +1,109 @@
+.shift-page {
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.shift-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 32px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.shift-card h1 {
+  font-size: 20px;
+  margin: 0 0 8px;
+  text-align: center;
+}
+
+.shift-meta {
+  font-size: 13px;
+  color: var(--text);
+  text-align: center;
+  margin: 0 0 12px;
+}
+
+.shift-card label {
+  font-size: 13px;
+  color: var(--text);
+  margin-top: 12px;
+}
+
+.shift-card input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+.shift-card button {
+  margin-top: 20px;
+  padding: 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-text);
+  cursor: pointer;
+}
+
+.shift-card button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.shift-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.shift-actions button {
+  flex: 1;
+}
+
+.shift-secondary {
+  background: var(--surface);
+  color: var(--text-h);
+  border: 1px solid var(--border) !important;
+}
+
+.shift-error {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.shift-summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  margin: 12px 0 20px;
+  font-size: 14px;
+}
+
+.shift-summary dt {
+  color: var(--text);
+}
+
+.shift-summary dd {
+  margin: 0;
+  text-align: right;
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+}
+
+.shift-variance {
+  color: var(--danger);
+  font-weight: 600;
+}

@@ -23,10 +23,14 @@ export function DashboardPage() {
         </button>
       </header>
 
-      <p className="dashboard-placeholder">
-        Halaman ini adalah fondasi login (Hari 1). Fitur Shift, Order, dan lainnya
-        menyusul di hari-hari berikutnya sesuai roadmap.
-      </p>
+      <nav className="dashboard-nav">
+        <button type="button" onClick={() => navigate("/tables")}>
+          Meja &amp; Order
+        </button>
+        <button type="button" onClick={() => navigate("/shift")}>
+          Shift
+        </button>
+      </nav>
     </main>
   );
 }

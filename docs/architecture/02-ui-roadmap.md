@@ -50,22 +50,23 @@ Each phase should get its own "discuss the approach, agree, then build" pass, sa
 model as the Purchasing extension — not built autonomously end-to-end like the
 original Day 1-14 sprint.
 
-### Phase 1 — UI Foundation + Core POS Flow
+### Phase 1 — UI Foundation + Core POS Flow — **Done**
 The minimum a Cashier needs to run a shift without touching `curl`:
-- Login
-- Open/close Shift (with cash reconciliation display)
-- Table view → seat a party → build an order (cart) → checkout (Cash/QRIS)
-- Void (PIN-gated), for Manager/Owner
+- Login (Day 1)
+- Open/close Shift (with cash reconciliation display) (Day 2)
+- Table view → seat a party → build an order (cart) → checkout (Cash/QRIS) (Day 2)
+- Void (PIN-gated), for Manager/Owner (Day 2)
 
-This alone would make the system operable for the core sales loop — the highest-value
-slice to ship first.
+This alone makes the system operable for the core sales loop — see
+`implementation-notes.md`'s "Web UI — Day 2" section for what was built and what's
+deliberately deferred (quantity stepper, remove-item). Verified live against the
+dev API, not just compiled.
 
-### Phase 2 — Kitchen/Bar + Station Routing
-- Depends on Decision #4 above.
-- If a KDS screen is wanted: a simple ticket-list view per station (Kitchen/Bar),
-  reading from `POST /api/orders/{id}/send-to-station`'s existing output.
-- If printed tickets are sufficient: this phase merges with the printer integration
-  work below instead of needing its own UI screen.
+### Phase 2 — Kitchen/Bar + Station Routing — **Merged into Phase 5**
+- Decision #4 resolved: printed ticket, no KDS screen. This phase needs no UI work
+  of its own — it merges with Phase 5 (Printer Integration) below. `Order.Items`
+  already carry a `Station` (Kitchen/Bar) and `POST /api/orders/{id}/send-to-station`
+  already formats the ticket text; all that's left is the printer adapter.
 
 ### Phase 3 — Back-Office: Purchasing & Suppliers
 - Supplier management, Purchase Request creation (Manager) + Approval (Owner),

@@ -5,7 +5,7 @@ using Restaurant.Domain.Sales;
 
 namespace Restaurant.Api.Contracts;
 
-public record TableResponse(Guid Id, string Number, TableStatus Status);
+public record TableResponse(Guid Id, string Number, TableStatus Status, Guid? CurrentOrderId);
 
 public record OpenShiftRequest(decimal OpeningCash);
 public record ShiftResponse(Guid Id, DateTimeOffset OpenedAt, decimal OpeningCash, ShiftStatus Status);

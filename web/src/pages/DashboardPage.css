@@ -31,8 +31,21 @@
   cursor: pointer;
 }
 
-.dashboard-placeholder {
+.dashboard-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   margin-top: 24px;
-  font-size: 14px;
-  color: var(--text);
+}
+
+.dashboard-nav button {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-h);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
 }
