@@ -183,10 +183,30 @@ infra was initially considered for an earlier slot (the data model already carri
 looks), but the owner confirmed there's no concrete second-outlet plan yet — so it
 stays deferred rather than built speculatively ahead of need.
 
-1. **Finance Reports (P&L, per-product margin)** — next up. Pure reporting on
-   data that already exists (`JournalEntry`, `Ingredient.AverageCost`,
-   `StockMovement.UnitCostAtTime`) — no new domain, no new invariants, same
-   shape of work as Phase 4/7.
+1. **Finance Reports (P&L, per-product margin)** — next up, scoped 2026-09-30.
+   - **P&L**: Revenue, COGS, Gross Profit, Operating Expenses (new — see below),
+     Net Profit. No tax/PPN in this pass — see the dedicated Tax item below.
+   - **New `OperatingExpense` domain**, added because a P&L without Operating
+     Expenses can only ever show Gross Profit, not genuine Net Profit. Follows
+     the exact same Accounts-Payable pattern Purchase already uses (recording an
+     expense posts `Debit OperatingExpense(6000) / Credit AccountsPayable`, not
+     an immediate cash assumption; a separate "bayar" action later posts
+     `Debit AccountsPayable / Credit Cash`) — matches standard accrual-basis
+     accounting (an expense is recognized when incurred, not when paid) and
+     reuses a pattern the codebase already has, rather than inventing a
+     cash-only shortcut.
+   - **Per-product margin**: `OrderItem` gains a new nullable `EstimatedCogs`,
+     snapshotted at Checkout per line item (not just the order-level aggregate
+     `JournalEntry` COGS line that already exists) — mirrors the
+     `StockMovement.UnitCostAtTime` snapshot pattern already established for
+     Waste. Historical `OrderItem`s predating this field report margin using a
+     same-request fallback (today's `Ingredient.AverageCost` × Recipe), clearly
+     distinguishable from the snapshotted figure — the report never goes empty
+     for old data, it's just less precise for it.
+   - Confirmed during design: Weighted-Average costing (PSAK 14-compliant) and
+     the multi-step Revenue → COGS → Gross Profit → OpEx → Net Profit format are
+     both standard, not an invented methodology — checked against the Majoo
+     benchmark before building, not after.
 2. **HR** (attendance/clock-in, shift schedule, commission, Kasbon/salary advance,
    basic payroll) — the most self-contained new domain of the remaining ones
    (least entangled with Sales/Catalog), so it's next even though it's a genuinely
@@ -222,6 +242,16 @@ stays deferred rather than built speculatively ahead of need.
    state, sitting there since Day 4 specifically for this. Nothing left to
    prepare — purely blocked on a management vendor decision (see Phase 6 above,
    which this folds into).
+8. **Tax on Order/Checkout** — raised 2026-09-30 during Finance Reports design,
+   deliberately split out and **blocked on the owner consulting a tax advisor**
+   first, not scoped further until then. Important distinction surfaced during
+   that discussion, worth preserving: a restaurant in Indonesia is typically
+   subject to **Pajak Restoran / PBJT** (a *regional* tax collected by
+   Pemda/Bapenda, no PKP status needed), not **PPN** (the *national* VAT, which
+   needs PKP status and is a different mechanism/rate entirely) — these are
+   easy to conflate but have different compliance requirements, so this wasn't
+   guessed at. Do not build anything tax-related off an assumption; wait for the
+   owner to confirm which actually applies to this business.
 
 ## 4. Known Standing Risks (carried over, not re-litigated here)
 
