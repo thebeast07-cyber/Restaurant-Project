@@ -1004,6 +1004,68 @@ charts, and wants comparison for Stock too, not just Sales/Waste).
   all three Export buttons (Excel/CSV/PDF) fired without a console error or a
   page crash on every card.
 
+### Web UI — Day 7 (Majoo-Parity Phase 1: Finance Reports)
+
+Completes the first Majoo-parity phase (see `02-ui-roadmap.md` §3b): P&L and
+per-product margin, plus a new Operating Expense domain needed to make Net
+Profit meaningful. Design was reviewed against standard accounting practice
+before building (checked: multi-step income statement format, PSAK
+14-compliant Weighted-Average costing, double-entry balance — all standard,
+not invented) — see the roadmap section for the two decisions that came out
+of that review.
+
+- **New `OperatingExpense` domain**, mirrors `Purchase`'s existing
+  Accounts-Payable pattern exactly: recording an expense posts
+  `Debit OperatingExpense(6000) / Credit AccountsPayable(2000)` at
+  `IncurredAt` (accrual basis — a bill counts against the period it was
+  incurred, not whenever it's actually paid), a separate payment endpoint
+  posts the `AP -> Cash` settlement later, supporting partial payment the
+  same way `PurchasePayment` does. New Account seeded: `6000 Operating
+  Expense`. New Account had to be inserted manually into the already-seeded
+  dev Postgres (`DataSeeder` only runs against a fresh Tenant) — a real
+  deployment would hit this too the first time a new seeded Account is added
+  after go-live; worth remembering if this happens again.
+- **`OrderItem.EstimatedCogs`** (new nullable column): Checkout now snapshots
+  each line's own share of Recipe-derived cost, not just the order-wide
+  aggregate the `JournalEntry` COGS line already had — needed because that
+  aggregate can't be attributed back to an individual product once two items
+  in the same order share an ingredient. Verified live via a real Checkout:
+  1x Nasi Goreng Ayam (80g Ayam + 200g Beras + 1 Telur) correctly snapshotted
+  `EstimatedCogs = 4400` (80×35 + 200×8 + 1×0) against the then-current
+  `AverageCost` values.
+- **Two new endpoints** (`ReportsController`): `GET /api/reports/profit-loss`
+  (Revenue/COGS/Gross Profit/Operating Expenses by category/Net Profit — no
+  tax line, deliberately, see roadmap Phase 8) reads straight from the
+  immutable `JournalEntry` ledger; `GET /api/reports/product-margin` reads
+  `OrderItem.EstimatedCogs` where present, falling back in the same request
+  to today's `AverageCost × Recipe × Quantity` for rows that predate the
+  snapshot (flagged via `CogsIsEstimated` on the response, not hidden).
+- **Found and fixed a real data-hygiene issue while verifying, not a code
+  bug**: `Ingredient.AverageCost` for "Ayam" was sitting at ~Rp14,227/gram
+  (should be ~Rp35/gram) — leftover pollution from old automated stress
+  tests (`PurchaseRaceTests` etc.) that used large `UnitCost` test values
+  against a shared dev Postgres, and since `AverageCost` is a running
+  weighted average that's never reset, it never self-corrected. This
+  explained an absurd first-pass P&L (`COGS` in the millions against
+  `Revenue` in the hundred-thousands) — not a bug in the new endpoints, which
+  were summing the ledger correctly. Fixed by resetting the dev value and
+  recording one realistic Purchase. **This is exactly why `product-margin`'s
+  live-fallback design earned its keep**: after the fix, the margin report
+  immediately reported sane numbers (83.6% gross margin) without touching any
+  historical row, while `profit-loss` — correctly, by design — kept
+  reporting the old inflated figure for any date range overlapping the
+  already-posted poisoned entries, since the ledger is immutable and doesn't
+  get rewritten retroactively.
+- Gated Owner/Manager, same pattern as every other admin page (role check
+  gates the `useEffect`s themselves before any request fires, not just the
+  render) — verified a Cashier gets the "khusus Manager/Owner" message with
+  zero network calls, both via the Dashboard (no Finance link shown) and via
+  direct navigation to `/finance`.
+- Verified live end-to-end: recorded an Unpaid expense, partially paid it
+  (status → `PartiallyPaid`), paid the remainder (status → `Paid`, "Bayar"
+  button disappears); P&L and product-margin both re-fetch correctly on date
+  range change.
+
 ## Gotchas (bugs already hit — read before you hit them again)
 
 ### JWT `sub` claim silently disappears

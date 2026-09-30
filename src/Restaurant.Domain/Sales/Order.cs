@@ -50,4 +50,16 @@ public class OrderItem : Entity, ITenantScoped
 
     /// <summary>Denormalized from Product at add-time so ticket routing survives later menu edits.</summary>
     public required Station Station { get; set; }
+
+    /// <summary>
+    /// This line's share of Recipe-derived ingredient cost, snapshotted at Checkout —
+    /// null for every OrderItem that predates this field (the per-product margin
+    /// report falls back to today's Ingredient.AverageCost for those, see
+    /// ReportsController.ProductMargin). Exists because Checkout's JournalEntry only
+    /// ever posted one aggregate COGS line for the whole Order — accurate for the
+    /// ledger, but with no way to attribute cost back to an individual product line
+    /// for a per-product margin report. Mirrors the same snapshot-at-the-moment
+    /// reasoning as StockMovement.UnitCostAtTime.
+    /// </summary>
+    public decimal? EstimatedCogs { get; set; }
 }

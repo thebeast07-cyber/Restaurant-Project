@@ -41,6 +41,9 @@ export function DashboardPage() {
             <button type="button" onClick={() => navigate("/reports")}>
               Laporan
             </button>
+            <button type="button" onClick={() => navigate("/finance")}>
+              Finance
+            </button>
           </>
         )}
       </nav>

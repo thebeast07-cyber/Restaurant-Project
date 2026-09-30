@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Restaurant.Api.Contracts;
+using Restaurant.Domain.Finance;
 using Restaurant.Domain.Inventory;
 using Restaurant.Domain.Payment;
 using Restaurant.Domain.Sales;
@@ -304,5 +305,119 @@ public class ReportsController : ControllerBase
         }
 
         return Ok(new StockTrendResponse(from, to, items));
+    }
+
+    /// <summary>
+    /// Multi-step income statement (Revenue → COGS → Gross Profit → Operating
+    /// Expenses → Net Profit) — standard format, not an invented one (checked
+    /// against the Majoo benchmark before building, see 02-ui-roadmap.md). Revenue
+    /// and COGS are read from the JournalEntry ledger (same source as every other
+    /// financial figure in this app); Operating Expenses are read directly from
+    /// OperatingExpense filtered on IncurredAt (the accrual date), not from the
+    /// journal — the journal doesn't carry Category, and IncurredAt is the more
+    /// precise "which period does this belong to" field for that domain anyway. No
+    /// tax/PPN line — deliberately out of scope, see roadmap Phase 8.
+    /// </summary>
+    [HttpGet("profit-loss")]
+    public async Task<ActionResult<ProfitLossResponse>> ProfitLoss([FromQuery] DateOnly from, [FromQuery] DateOnly to)
+    {
+        if (to < from)
+        {
+            return BadRequest(new { message = "'to' must not be before 'from'." });
+        }
+
+        var rangeStart = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var rangeEndExclusive = new DateTimeOffset(to.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero).AddDays(1);
+
+        var revenueAccount = await _db.Accounts.SingleAsync(a => a.Code == "4000");
+        var cogsAccount = await _db.Accounts.SingleAsync(a => a.Code == "5000");
+
+        var revenue = await _db.JournalLines
+            .Where(l => l.AccountId == revenueAccount.Id)
+            .Join(_db.JournalEntries, l => l.JournalEntryId, j => j.Id, (l, j) => new { l.Debit, l.Credit, j.CreatedAt })
+            .Where(x => x.CreatedAt >= rangeStart && x.CreatedAt < rangeEndExclusive)
+            .SumAsync(x => x.Credit - x.Debit);
+
+        var cogs = await _db.JournalLines
+            .Where(l => l.AccountId == cogsAccount.Id)
+            .Join(_db.JournalEntries, l => l.JournalEntryId, j => j.Id, (l, j) => new { l.Debit, l.Credit, j.CreatedAt })
+            .Where(x => x.CreatedAt >= rangeStart && x.CreatedAt < rangeEndExclusive)
+            .SumAsync(x => x.Debit - x.Credit);
+
+        var grossProfit = revenue - cogs;
+        var grossMarginPct = revenue != 0 ? grossProfit / revenue * 100 : 0;
+
+        var expensesByCategory = await _db.OperatingExpenses
+            .Where(e => e.IncurredAt >= from && e.IncurredAt <= to)
+            .GroupBy(e => e.Category)
+            .Select(g => new ProfitLossExpenseCategoryLine(g.Key, g.Sum(e => e.Amount)))
+            .ToListAsync();
+
+        var totalOperatingExpenses = expensesByCategory.Sum(l => l.Amount);
+        var netProfit = grossProfit - totalOperatingExpenses;
+        var netMarginPct = revenue != 0 ? netProfit / revenue * 100 : 0;
+
+        return Ok(new ProfitLossResponse(
+            from, to, revenue, cogs, grossProfit, grossMarginPct,
+            expensesByCategory, totalOperatingExpenses, netProfit, netMarginPct));
+    }
+
+    /// <summary>
+    /// Per-product gross margin — Revenue and COGS attributed back to each Product
+    /// sold, not just an order-wide total. Prefers OrderItem.EstimatedCogs (the
+    /// snapshot taken at Checkout, see Order.cs); for any OrderItem that predates
+    /// that field (EstimatedCogs is null), falls back in the same request to
+    /// today's Ingredient.AverageCost × Recipe × Quantity — less precise (today's
+    /// cost, not the cost at the time of that sale) but keeps the report non-empty
+    /// for historical data instead of silently dropping it. CogsIsEstimated on the
+    /// response tells the frontend which rows include a fallback so it can be
+    /// labeled, not hidden.
+    /// </summary>
+    [HttpGet("product-margin")]
+    public async Task<ActionResult<ProductMarginResponse>> ProductMargin([FromQuery] DateOnly from, [FromQuery] DateOnly to)
+    {
+        if (to < from)
+        {
+            return BadRequest(new { message = "'to' must not be before 'from'." });
+        }
+
+        var rangeStart = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var rangeEndExclusive = new DateTimeOffset(to.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero).AddDays(1);
+
+        var completedOrderIds = await _db.Orders
+            .Where(o => o.Status == OrderStatus.Completed && o.CreatedAt >= rangeStart && o.CreatedAt < rangeEndExclusive)
+            .Select(o => o.Id)
+            .ToListAsync();
+
+        var orderItems = await _db.OrderItems.Where(oi => completedOrderIds.Contains(oi.OrderId)).ToListAsync();
+
+        var productIds = orderItems.Select(oi => oi.ProductId).Distinct().ToList();
+        var productNames = await _db.Products.Where(p => productIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id, p => p.Name);
+        var recipeItems = await _db.RecipeItems.Where(r => productIds.Contains(r.ProductId)).ToListAsync();
+        var ingredientIds = recipeItems.Select(r => r.IngredientId).Distinct().ToList();
+        var averageCosts = await _db.Ingredients.Where(i => ingredientIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id, i => i.AverageCost);
+
+        var items = new List<ProductMarginItem>();
+        foreach (var group in orderItems.GroupBy(oi => oi.ProductId))
+        {
+            var quantitySold = group.Sum(oi => oi.Quantity);
+            var revenue = group.Sum(oi => oi.Subtotal);
+            var cogsIsEstimated = group.Any(oi => oi.EstimatedCogs is null);
+
+            var cogs = group.Sum(oi => oi.EstimatedCogs ?? recipeItems
+                .Where(r => r.ProductId == oi.ProductId)
+                .Sum(r => r.Quantity * oi.Quantity * averageCosts.GetValueOrDefault(r.IngredientId, 0m)));
+
+            var grossProfit = revenue - cogs;
+            var grossMarginPct = revenue != 0 ? grossProfit / revenue * 100 : 0;
+
+            items.Add(new ProductMarginItem(
+                group.Key, productNames.GetValueOrDefault(group.Key, "?"), quantitySold,
+                revenue, cogs, grossProfit, grossMarginPct, cogsIsEstimated));
+        }
+
+        items = items.OrderByDescending(i => i.GrossProfit).ToList();
+
+        return Ok(new ProductMarginResponse(from, to, items));
     }
 }

@@ -48,6 +48,8 @@ public class AppDbContext : DbContext
     public DbSet<Purchase> Purchases => Set<Purchase>();
     public DbSet<PurchaseItem> PurchaseItems => Set<PurchaseItem>();
     public DbSet<PurchasePayment> PurchasePayments => Set<PurchasePayment>();
+    public DbSet<OperatingExpense> OperatingExpenses => Set<OperatingExpense>();
+    public DbSet<OperatingExpensePayment> OperatingExpensePayments => Set<OperatingExpensePayment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -225,6 +227,19 @@ public class AppDbContext : DbContext
             pp.ToTable("purchase_payments");
             pp.HasIndex(x => x.PurchaseId);
             pp.HasOne<Purchase>().WithMany().HasForeignKey(x => x.PurchaseId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<OperatingExpense>(oe =>
+        {
+            oe.ToTable("operating_expenses");
+            oe.HasIndex(x => new { x.TenantId, x.BranchId });
+        });
+
+        modelBuilder.Entity<OperatingExpensePayment>(oep =>
+        {
+            oep.ToTable("operating_expense_payments");
+            oep.HasIndex(x => x.OperatingExpenseId);
+            oep.HasOne<OperatingExpense>().WithMany().HasForeignKey(x => x.OperatingExpenseId).OnDelete(DeleteBehavior.Restrict);
         });
 
         ApplyTenantQueryFilters(modelBuilder);

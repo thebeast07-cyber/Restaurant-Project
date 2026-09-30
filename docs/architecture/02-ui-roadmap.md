@@ -183,7 +183,10 @@ infra was initially considered for an earlier slot (the data model already carri
 looks), but the owner confirmed there's no concrete second-outlet plan yet — so it
 stays deferred rather than built speculatively ahead of need.
 
-1. **Finance Reports (P&L, per-product margin)** — next up, scoped 2026-09-30.
+1. **Finance Reports (P&L, per-product margin)** — **Done**, scoped and built
+   2026-09-30. See `implementation-notes.md`'s "Web UI — Day 7" section for what
+   was built and a real dev-data hygiene issue (poisoned `Ingredient.AverageCost`
+   from old stress tests) found and fixed while verifying it live.
    - **P&L**: Revenue, COGS, Gross Profit, Operating Expenses (new — see below),
      Net Profit. No tax/PPN in this pass — see the dedicated Tax item below.
    - **New `OperatingExpense` domain**, added because a P&L without Operating

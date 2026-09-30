@@ -394,6 +394,20 @@ public class OrdersController : ControllerBase
             .ToDictionaryAsync(i => i.Id, i => i.AverageCost);
         var totalCogs = deducted.Sum(d => d.Quantity * averageCosts.GetValueOrDefault(d.IngredientId, 0m));
 
+        // Per-item COGS snapshot (Finance Reports, 2026-09-30): totalCogs above is
+        // fine for the ledger's single aggregate JournalLine, but a per-product
+        // margin report needs each OrderItem's own share of the recipe cost, not
+        // just the order-wide total — see OrderItem.EstimatedCogs for why this can't
+        // be reconstructed later from StockMovement alone (movements are aggregated
+        // per-Ingredient across the whole order, not attributed back to a product
+        // line once two items share an ingredient).
+        foreach (var item in order.Items)
+        {
+            item.EstimatedCogs = recipeItems
+                .Where(r => r.ProductId == item.ProductId)
+                .Sum(r => r.Quantity * item.Quantity * averageCosts.GetValueOrDefault(r.IngredientId, 0m));
+        }
+
         if (totalCogs > 0)
         {
             var cogsAccount = await _db.Accounts.SingleAsync(a => a.Code == "5000");
