@@ -148,16 +148,45 @@ Not started, not urgent, each gated on an external decision:
   for why Weighted-Average was chosen first.
 
 ### Phase 7 — Reporting Enhancements (Charts, Export, Period Comparison)
-- Raised during the Phase 4 design discussion (2026-09-30): the owner wants charts,
-  export (PDF/Excel), and period-over-period comparison on top of the Phase 4
-  reports. Deliberately split into its own phase rather than folded into Phase 4 —
-  none of the three existing report endpoints (`sales-daily`, `stock-levels`,
-  `waste`) carry the data these need (e.g. period comparison needs a date-range
-  query, not just a single date/month), so this needs its own backend design pass,
-  not just a frontend addition.
-- Not scoped in detail yet — needs its own "discuss the approach, agree, then
-  build" pass same as every other phase, once Phase 4 ships and it's clear what
-  shape of chart/export is actually wanted.
+Raised during the Phase 4 design discussion (2026-09-30). Scoped 2026-09-30 per the
+owner's answers below — still needs an implementation design pass (this is scope,
+not a build plan) before coding starts.
+
+- **Charts wanted on all three Phase 4 reports:**
+  - **Sales trend** — daily sales over a range (e.g. last 30 days), not just the
+    single-day view Phase 4 has. **Needs a new backend endpoint**:
+    `GET /api/reports/sales-range?from=&to=` returning one row per day
+    (reuses `SalesDailyReport`'s shape, just looped server-side instead of one
+    query per day from the frontend).
+  - **Stock levels** — which ingredients run low most often / deplete fastest.
+    **No new table needed** — `StockMovement` is already a full timestamped
+    ledger (every change, with `Reason` and `CreatedAt`), so a stock-level-over-time
+    series can be reconstructed by summing `ChangeQuantity` up to each point in
+    time, without a new snapshot mechanism. Still needs its own query design
+    (this is a running-balance reconstruction, not a simple `SELECT`) — open
+    question to resolve at design time: chart the *frequency* of dropping below
+    minimum, or the *rate of depletion* (steepness of the decline)? Different
+    queries, different chart.
+  - **Waste trend** — waste value per month over a range, analogous to sales
+    trend. **Needs a new endpoint**: `GET /api/reports/waste-range?from=&to=`
+    (year/month pairs), looping the existing monthly aggregation instead of
+    one query per month from the frontend.
+- **Export**: both Excel/CSV and PDF, for all three reports. Frontend-only —
+  export from data already fetched for display, no new backend needed. New
+  frontend dependencies required (not yet in `web/package.json`): an Excel/CSV
+  library (e.g. `xlsx` or `papaparse`) and a PDF library (e.g. `jspdf` +
+  `jspdf-autotable`) — flagged here so pulling them in isn't a surprise
+  mid-implementation.
+- **Period comparison**: "this period vs. previous period" (e.g. this week vs.
+  last week, this month vs. last month), automatic — not a free two-range picker.
+  Applies to Sales and Waste (Stock Levels is a point-in-time snapshot, comparison
+  doesn't apply the same way — needs its own call at design time whether "compare"
+  means anything for stock, or whether it's Sales/Waste only). Built on top of the
+  same `sales-range`/`waste-range` endpoints above: fetch both periods, diff
+  client-side — no separate "comparison" endpoint needed.
+- **Not yet decided, needs its own design pass before build**: exact query shape
+  for the stock-level time-series (frequency vs. depletion-rate), and whether
+  Stock Levels gets a comparison view at all.
 
 ### Not Planned (P1/P2/P3 — explicitly out of scope for this roadmap)
 HR/attendance, CRM/loyalty, Promotion, multi-branch admin UI, custom RBAC builder,
