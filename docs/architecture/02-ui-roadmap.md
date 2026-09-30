@@ -167,11 +167,61 @@ for what was built and how the stock-level time-series was reconstructed from th
   top of those: the frontend calls the same range endpoint twice and diffs
   client-side.
 
-### Not Planned (P1/P2/P3 — explicitly out of scope for this roadmap)
-HR/attendance, CRM/loyalty, Promotion, multi-branch admin UI, custom RBAC builder,
-Production (raw→semi-finished conversion), Batch/Serial tracking, Marketplace/
-Omnichannel integration. See `01-mvp-technical-design.md`'s "Ditunda" list — nothing
-here has changed since that was written.
+## 3b. Majoo-Parity Expansion (raised 2026-09-30)
+
+The owner wants this system to grow toward feature parity with Majoo (the
+benchmark used since discovery — see `docs/discovery/12-competitor-gap-analysis.md`
+and `02-feature-inventory.md` for the full comparison this section is sourced
+from), not stay capped at the original MVP scope. This replaces the old "Not
+Planned (P1/P2/P3)" list below — those items are now real phases with an agreed
+sequence, not a permanent out-of-scope list.
+
+**Sequencing logic**, agreed 2026-09-30: prioritize by what's actually felt
+day-to-day at the current single-outlet scale, not by "completeness." Multi-outlet
+infra was initially considered for an earlier slot (the data model already carries
+`TenantId`/`BranchId` on every table via `IBranchScoped`, so it's cheaper than it
+looks), but the owner confirmed there's no concrete second-outlet plan yet — so it
+stays deferred rather than built speculatively ahead of need.
+
+1. **Finance Reports (P&L, per-product margin)** — next up. Pure reporting on
+   data that already exists (`JournalEntry`, `Ingredient.AverageCost`,
+   `StockMovement.UnitCostAtTime`) — no new domain, no new invariants, same
+   shape of work as Phase 4/7.
+2. **HR** (attendance/clock-in, shift schedule, commission, Kasbon/salary advance,
+   basic payroll) — the most self-contained new domain of the remaining ones
+   (least entangled with Sales/Catalog), so it's next even though it's a genuinely
+   new module needing its own design pass before building, same as Purchasing got.
+3. **CRM & Promotion** (customer database, loyalty points, discount/voucher
+   engine) — deliberately pushed behind HR per the owner's explicit call 2026-09-30,
+   despite being an earlier pick — touches the Checkout flow directly (discount
+   calculation, customer attach), needs its own design pass when its turn comes.
+4. **Multi-Outlet** (tenant-scoped login, outlet management UI, branch selector)
+   — on hold, not urgent at current single-outlet scale. Revisit when a second
+   outlet is actually planned, not before — see Known Standing Risks below for
+   the specific gap (login is username-only) this eventually forces closed.
+5. **Inventory Lanjutan** (multi-branch stock transfer, batch/expiry tracking,
+   Production/raw→semi-finished conversion) — gated on Multi-Outlet for the
+   transfer piece specifically; batch/expiry and Production could in principle
+   move independently, but grouped here since none are urgent at single-outlet
+   scale either.
+6. **Omnichannel** (GrabFood/GoFood, Tokopedia/Shopee) — **explicitly not
+   pre-built speculatively.** Considered "build the bridge now" per the owner's
+   suggestion, but rejected for this one specifically (unlike Payment Gateway,
+   below): each platform's webhook payload shape is different and unknown until
+   a specific vendor is actually chosen, so speculative integration code risks
+   guessing the wrong shape and needing a rewrite anyway — the opposite of what
+   "build the bridge early" was meant to achieve. The only prep that's actually
+   safe to do without knowing the vendor is conceptual, not code: an `Order.Source`
+   field (Dine-in vs. Online) so the data model has somewhere to record an order's
+   origin whenever this phase actually starts. No endpoint, no webhook handler,
+   no background-job engine choice until a specific platform is picked.
+7. **Payment Gateway** (real bank/e-wallet, EDC) — unlike Omnichannel, the bridge
+   for this one genuinely is already built and doesn't need vendor-specific
+   knowledge to exist safely: `PaymentMethod` is already generic (not
+   hardcoded to Cash/QRIS) and `Payment.Status` already has an unused `Pending`
+   state, sitting there since Day 4 specifically for this. Nothing left to
+   prepare — purely blocked on a management vendor decision (see Phase 6 above,
+   which this folds into).
 
 ## 4. Known Standing Risks (carried over, not re-litigated here)
 
