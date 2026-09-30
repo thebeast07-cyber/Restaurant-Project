@@ -801,6 +801,103 @@ after backing out without ordering anything.
   noise so the UI reflects only real menu/catalog data during manual
   end-to-end testing.
 
+### Inline "+ Bahan Baru" in every ingredient picker
+
+Requested after the owner noticed the ingredient `<select>` (Product recipe
+editor, Purchase Request lines, Purchase lines) only ever listed *existing*
+Ingredients — adding a new one meant leaving the form, going to
+`/purchasing/ingredients`, then coming back. New shared component
+`web/src/components/IngredientSelect.tsx` wraps that `<select>` with a
+`+ Bahan Baru` option that opens a small inline create-Ingredient modal
+(name + unit; `MinimumStock` defaults to 0, editable later same as always)
+without losing the form the cashier/manager was in the middle of filling out.
+Dropped into all three pickers (`ProductsAdminPage`'s recipe editor,
+`PurchaseRequestsPage`, `PurchasesPage`) in place of their inline `<select>`.
+
+- **Bug caught before it shipped, twice, same underlying cause**: this
+  modal's `<form>` needed `React.createPortal(..., document.body)` — without
+  it, the `<select>` (rendered inside whatever `<form>` hosts the picker,
+  e.g. `ProductsAdminPage`'s edit-Product form) put an inner `<form>` inside
+  an outer `<form>`, which HTML forbids; the browser silently repaired the
+  invalid markup, and submitting the inner form ended up submitting the
+  outer one instead. **After** adding the portal, the exact same symptom
+  reappeared (saving a new Ingredient here still closed and saved the whole
+  Product edit) — because **React re-dispatches a portaled element's events
+  along the React component tree, not the DOM tree**: even placed in
+  `document.body`, this form is still a React-tree descendant of the page's
+  outer `<form>`, so a `submit` event bubbles into `onSubmit={handleEditSave}`
+  regardless of where the portal physically renders it. Fixed with
+  `event.stopPropagation()` in the inner form's submit handler, in addition
+  to the portal (the portal alone only fixes the DOM-nesting violation, not
+  the event-bubbling one — both were needed). **Pattern to remember**: any
+  portaled `<form>`/interactive element nested (in the *component* tree) inside
+  another `<form>` needs both fixes together, not just one.
+- Verified live: opened the Ingredient picker inside the Product edit
+  modal for Nasi Goreng Ayam, created "Kopi Arabika" without leaving the
+  modal, confirmed only the create-Ingredient modal closed (Product edit
+  modal stayed open, no premature save), and the new Ingredient was
+  auto-selected in the recipe line that triggered it.
+
+## Concurrency
+- "At most one open Shift per user" is enforced by a **partial unique index**
+  (`shifts (UserId) WHERE Status = 0`), not just the `AnyAsync` check in
+  `ShiftsController.Open`. The application-level check alone is check-then-insert and
+  race-prone; verified with 5 concurrent open-shift requests for the same user — the
+  DB constraint let exactly 1 through and the other 4 got a clean `409`, not a crash.
+  This is the pattern to follow for any other "at most one X" invariant going forward
+  (don't trust an `AnyAsync` check alone under concurrency — back it with a DB
+  constraint and catch `DbUpdateException` to turn the violation into a clean 4xx).
+
+- **Stock deduction is an atomic conditional `UPDATE` per Ingredient, not
+  read-modify-write.** The first version of `Checkout` read `Stock.Quantity`, computed
+  the new value in C#, and wrote it back via the normal change tracker — the textbook
+  lost-update race. A stress test (`StockRaceConditionTests`, see `tests/`) fired 20
+  concurrent checkouts against 5 units of stock: **all 20 "succeeded"**, massively
+  overselling, with zero errors anywhere — this is the dangerous kind of bug, since
+  nothing looks wrong until someone reconciles stock later. Fixed by replacing the
+  read-then-write with
+  `_db.Stocks.Where(s => s.IngredientId == id && s.Quantity >= required).ExecuteUpdateAsync(...)`
+  inside an explicit transaction: this is a single atomic SQL statement, so Postgres
+  row-locks the matched row for its duration — a concurrent request re-evaluates
+  `Quantity >= required` against the value just written, never a stale read. If 0 rows
+  are affected, that Ingredient was short (checked without a separate read
+  beforehand). Re-ran the same stress test after the fix: exactly 5 of 20 succeed, the
+  rest get a clean `400`, final stock is exactly 0, never negative.
+  **Pattern to reuse anywhere else in this codebase that decrements a shared
+  counter/quantity under potential concurrency**: never "SELECT then subtract then
+  SAVE" — use a conditional `ExecuteUpdateAsync` (or raw atomic SQL) and check rows
+  affected instead.
+- A second stress test (`CheckoutLoadTests`) covers the complementary failure mode:
+  plentiful stock, 50 genuinely concurrent full checkout flows, asserting the **exact**
+  final quantity (not just "no errors") — a lost update here would under-deduct
+  silently while every request still reports `200 OK`. Also passes post-fix.
+- **A third, independent race: two concurrent checkouts on the SAME order.** The stock
+  fix above says nothing about whether the *Order* itself can be checked out twice —
+  it only guards the Ingredient quantity. Wrote a targeted follow-up stress test
+  (`OrderCheckoutRaceTests`) that fires 10 concurrent checkout calls at one Order: all
+  10 "succeeded" before the fix — 10x Payment, 10x JournalEntry, 10x stock deduction
+  for what should be a single sale. Fixed the same way as the stock race: atomically
+  claim the Order via
+  `_db.Orders.Where(o => o.Id == orderId && (Status == Draft || Status == Open)).ExecuteUpdateAsync(SetProperty(o => o.Status, Completed))`
+  as the very first write inside the transaction, checking rows-affected, before any
+  stock/payment/journal work happens. Only the request that wins the claim proceeds;
+  everyone else gets a clean 400 immediately. Re-verified 3x for stability: exactly 1
+  of 10 succeeds every time.
+  - **Follow-on bug this fix introduced, caught by manual smoke test (not the stress
+    test)**: `ExecuteUpdateAsync` writes directly to the DB and bypasses EF Core's
+    change tracker, so the `Order` instance already loaded earlier in the same request
+    keeps its stale pre-checkout `Status` in memory. `BuildOrderResponse` then
+    re-queried on the *same* `DbContext`, and EF's identity map handed back that
+    already-tracked (stale) instance instead of re-reading the column — so a
+    successful checkout's response reported `"status": "Draft"` even though the DB
+    correctly said `Completed`. Fixed with `.AsNoTracking()` on the query in
+    `BuildOrderResponse`. **Lesson**: after any `ExecuteUpdateAsync`/raw SQL mutation
+    within a request, don't trust a tracked re-query on the same context to reflect
+    it — use `AsNoTracking()` (or re-attach/reload explicitly) for anything read back
+    afterward.
+
+## Gotchas (bugs already hit — read before you hit them again)
+
 ### JWT `sub` claim silently disappears
 ASP.NET Core's `JwtBearerHandler` remaps short claim types (`sub`, `role`, ...) to
 long XML-schema URIs by default when validating an incoming token
