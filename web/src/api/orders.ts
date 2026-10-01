@@ -22,6 +22,9 @@ export interface Order {
   tableId: string | null;
   shiftId: string;
   status: OrderStatus;
+  subtotal: number;
+  promoCode: string | null;
+  discountAmount: number;
   totalAmount: number;
   items: OrderItem[];
 }
@@ -73,6 +76,19 @@ export function updateOrderItemNotes(orderId: string, itemId: string, notes: str
   return apiFetch<Order>(`/api/orders/${orderId}/items/${itemId}/notes`, {
     method: "PUT",
     body: JSON.stringify({ notes: notes || null }),
+  });
+}
+
+export function applyPromoCode(orderId: string, code: string): Promise<Order> {
+  return apiFetch<Order>(`/api/orders/${orderId}/promo-code`, {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function removePromoCode(orderId: string): Promise<Order> {
+  return apiFetch<Order>(`/api/orders/${orderId}/promo-code`, {
+    method: "DELETE",
   });
 }
 

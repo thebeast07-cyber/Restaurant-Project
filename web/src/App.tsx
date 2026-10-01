@@ -11,6 +11,7 @@ import { PurchaseRequestsPage } from "./pages/PurchaseRequestsPage";
 import { PurchasesPage } from "./pages/PurchasesPage";
 import { StockOpnamePage } from "./pages/StockOpnamePage";
 import { MenuPage } from "./pages/MenuPage";
+import { PromoCodesPage } from "./pages/PromoCodesPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
 import { ProductsAdminPage } from "./pages/ProductsAdminPage";
 import { ReportsPage } from "./pages/ReportsPage";
@@ -44,6 +45,7 @@ function App() {
         <Route path="/purchasing/purchases" element={<PurchasesPage />} />
         <Route path="/purchasing/stock-opname" element={<StockOpnamePage />} />
         <Route path="/menu" element={<MenuPage />} />
+        <Route path="/promo-codes" element={<PromoCodesPage />} />
         <Route path="/menu/categories" element={<CategoriesPage />} />
         <Route path="/menu/products" element={<ProductsAdminPage />} />
         <Route path="/reports" element={<ReportsPage />} />

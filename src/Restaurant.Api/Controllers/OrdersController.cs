@@ -9,6 +9,7 @@ using Restaurant.Domain.Audit;
 using Restaurant.Domain.Common;
 using Restaurant.Domain.Finance;
 using Restaurant.Domain.Inventory;
+using Restaurant.Domain.Promotion;
 using Restaurant.Domain.Sales;
 using Restaurant.Infrastructure.Persistence;
 using DomainPayment = Restaurant.Domain.Payment;
@@ -194,7 +195,7 @@ public class OrdersController : ControllerBase
         // once it's tracked (its OrderId matches the already-tracked Order) — adding
         // it to both places here would double-count it in RecalculateTotal below.
         _db.OrderItems.Add(item);
-        order.RecalculateTotal();
+        await RecalculateOrderTotalAsync(order);
         await _db.SaveChangesAsync();
 
         return Ok(await BuildOrderResponse(order.Id));
@@ -222,6 +223,79 @@ public class OrdersController : ControllerBase
 
         _db.OrderItems.Remove(item);
         order.Items.Remove(item);
+        await RecalculateOrderTotalAsync(order);
+        await _db.SaveChangesAsync();
+
+        return Ok(await BuildOrderResponse(order.Id));
+    }
+
+    /// <summary>
+    /// Attempts to match Code against this Branch's active PromoCodes (case-
+    /// insensitive), validates ExpiresAt/MinimumPurchase, and attaches it —
+    /// UsageLimit is only hard-enforced at Checkout (see there), this is just an
+    /// early rejection for an already-exhausted code so the cashier/customer isn't
+    /// told the discount applied when Checkout would immediately undo it.
+    /// </summary>
+    [HttpPost("{orderId:guid}/promo-code")]
+    public async Task<ActionResult<OrderResponse>> ApplyPromoCode(Guid orderId, ApplyPromoCodeRequest request)
+    {
+        var order = await _db.Orders.Include(o => o.Items).SingleOrDefaultAsync(o => o.Id == orderId);
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        if (order.Status is not (OrderStatus.Draft or OrderStatus.Open))
+        {
+            return BadRequest(new { message = $"Cannot apply a promo code to an order in status {order.Status}." });
+        }
+
+        var normalizedCode = request.Code.Trim().ToUpperInvariant();
+        var promo = await _db.PromoCodes.SingleOrDefaultAsync(p =>
+            p.TenantId == order.TenantId && p.BranchId == order.BranchId && p.Code == normalizedCode && p.IsActive);
+        if (promo is null)
+        {
+            return BadRequest(new { message = "Kode promo tidak ditemukan atau sudah tidak aktif." });
+        }
+
+        if (promo.ExpiresAt is not null && promo.ExpiresAt < DateOnly.FromDateTime(DateTime.UtcNow))
+        {
+            return BadRequest(new { message = "Kode promo sudah kedaluwarsa." });
+        }
+
+        if (promo.UsageLimit is not null && promo.UsageCount >= promo.UsageLimit)
+        {
+            return BadRequest(new { message = "Kuota kode promo sudah habis." });
+        }
+
+        var subtotal = order.Items.Sum(i => i.Subtotal);
+        if (promo.MinimumPurchase is not null && subtotal < promo.MinimumPurchase)
+        {
+            return BadRequest(new { message = $"Minimal belanja untuk kode ini adalah {promo.MinimumPurchase:C0}." });
+        }
+
+        order.PromoCodeId = promo.Id;
+        order.RecalculateTotal(promo.PercentageOff, promo.MinimumPurchase);
+        await _db.SaveChangesAsync();
+
+        return Ok(await BuildOrderResponse(order.Id));
+    }
+
+    [HttpDelete("{orderId:guid}/promo-code")]
+    public async Task<ActionResult<OrderResponse>> RemovePromoCode(Guid orderId)
+    {
+        var order = await _db.Orders.Include(o => o.Items).SingleOrDefaultAsync(o => o.Id == orderId);
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        if (order.Status is not (OrderStatus.Draft or OrderStatus.Open))
+        {
+            return BadRequest(new { message = $"Cannot remove a promo code from an order in status {order.Status}." });
+        }
+
+        order.PromoCodeId = null;
         order.RecalculateTotal();
         await _db.SaveChangesAsync();
 
@@ -409,6 +483,25 @@ public class OrdersController : ControllerBase
         {
             await transaction.RollbackAsync();
             return BadRequest(new { message = "This order was already checked out by another request." });
+        }
+
+        // Same atomic-conditional-UPDATE discipline as the Order claim above and the
+        // Stock deduction below — a PromoCode's UsageLimit is a hard cap shared across
+        // every Order that might attach it, so two concurrent checkouts both holding
+        // the last available slot must not both succeed. This is the only place
+        // UsageCount is incremented (never at Apply time, see ApplyPromoCode) — an
+        // Order that attached a code and then got Cancelled never consumed a slot.
+        if (order.PromoCodeId is not null)
+        {
+            var promoClaimed = await _db.PromoCodes
+                .Where(p => p.Id == order.PromoCodeId && (p.UsageLimit == null || p.UsageCount < p.UsageLimit))
+                .ExecuteUpdateAsync(setters => setters.SetProperty(p => p.UsageCount, p => p.UsageCount + 1));
+
+            if (promoClaimed == 0)
+            {
+                await transaction.RollbackAsync();
+                return BadRequest(new { message = "Kuota kode promo ini baru saja habis dipakai order lain — hapus kode promo dan coba lagi." });
+            }
         }
 
         var shortages = new List<object>();
@@ -689,6 +782,25 @@ public class OrdersController : ControllerBase
         return Ok(new VoidOrderResponse(orderResponse!, reversalJournalId));
     }
 
+    /// <summary>
+    /// RecalculateTotal needs the attached PromoCode's rule (if any) to recompute
+    /// DiscountAmount against the current cart — this re-reads it fresh rather than
+    /// trusting a value the caller might be holding stale, since item add/remove is
+    /// exactly the moment the cart (and therefore MinimumPurchase eligibility) just
+    /// changed.
+    /// </summary>
+    private async Task RecalculateOrderTotalAsync(Order order)
+    {
+        if (order.PromoCodeId is null)
+        {
+            order.RecalculateTotal();
+            return;
+        }
+
+        var promo = await _db.PromoCodes.SingleAsync(p => p.Id == order.PromoCodeId);
+        order.RecalculateTotal(promo.PercentageOff, promo.MinimumPurchase);
+    }
+
     private async Task<OrderResponse?> BuildOrderResponse(Guid orderId)
     {
         // AsNoTracking is required here, not just a perf nicety: Checkout mutates
@@ -712,12 +824,18 @@ public class OrdersController : ControllerBase
         var variantNames = await _db.ProductVariants
             .Where(v => variantIds.Contains(v.Id))
             .ToDictionaryAsync(v => v.Id, v => v.Name);
+        var promoCode = order.PromoCodeId is null
+            ? null
+            : await _db.PromoCodes.Where(p => p.Id == order.PromoCodeId).Select(p => p.Code).SingleOrDefaultAsync();
 
         return new OrderResponse(
             order.Id,
             order.TableId,
             order.ShiftId,
             order.Status,
+            order.Subtotal,
+            promoCode,
+            order.DiscountAmount,
             order.TotalAmount,
             order.Items.Select(i => new OrderItemResponse(
                 i.Id, i.ProductId, productNames.GetValueOrDefault(i.ProductId, "?"),

@@ -10,6 +10,7 @@ using Restaurant.Domain.Identity;
 using Restaurant.Domain.Inventory;
 using Restaurant.Domain.Organization;
 using Restaurant.Domain.Payment;
+using Restaurant.Domain.Promotion;
 using Restaurant.Domain.Purchasing;
 using Restaurant.Domain.Sales;
 
@@ -41,6 +42,7 @@ public class AppDbContext : DbContext
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
     public DbSet<StockOpnameSession> StockOpnameSessions => Set<StockOpnameSession>();
     public DbSet<Customer> Customers => Set<Customer>();
+    public DbSet<PromoCode> PromoCodes => Set<PromoCode>();
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<JournalEntry> JournalEntries => Set<JournalEntry>();
     public DbSet<JournalLine> JournalLines => Set<JournalLine>();
@@ -141,6 +143,13 @@ public class AppDbContext : DbContext
             o.HasOne<RestaurantTable>().WithMany().HasForeignKey(x => x.TableId).OnDelete(DeleteBehavior.Restrict);
             o.HasOne<Shift>().WithMany().HasForeignKey(x => x.ShiftId).OnDelete(DeleteBehavior.Restrict);
             o.HasOne<Customer>().WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+            o.HasOne<PromoCode>().WithMany().HasForeignKey(x => x.PromoCodeId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<PromoCode>(p =>
+        {
+            p.ToTable("promo_codes");
+            p.HasIndex(x => new { x.TenantId, x.BranchId, x.Code }).IsUnique();
         });
 
         modelBuilder.Entity<Customer>(c =>

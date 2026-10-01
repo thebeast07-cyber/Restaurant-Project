@@ -5,10 +5,12 @@ import { listCategories, type Category } from "../api/categories";
 import { listProducts, type Product } from "../api/products";
 import {
   addOrderItem,
+  applyPromoCode,
   cancelOrder,
   checkoutOrder,
   getOrder,
   removeOrderItem,
+  removePromoCode,
   updateOrderItemNotes,
   voidOrder,
   type Order,
@@ -46,6 +48,9 @@ export function OrderPage() {
   const [cashTendered, setCashTendered] = useState("");
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [variantPickerProduct, setVariantPickerProduct] = useState<Product | null>(null);
+  const [promoInput, setPromoInput] = useState("");
+  const [promoError, setPromoError] = useState<string | null>(null);
+  const [isApplyingPromo, setIsApplyingPromo] = useState(false);
 
   useEffect(() => {
     if (!paymentConfirmation || !orderId) return;
@@ -135,6 +140,39 @@ export function OrderPage() {
       setOrder(updated);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Tidak bisa terhubung ke server.");
+    }
+  }
+
+  async function handleApplyPromo() {
+    if (!orderId || !promoInput.trim()) {
+      return;
+    }
+    setPromoError(null);
+    setIsApplyingPromo(true);
+    try {
+      const updated = await applyPromoCode(orderId, promoInput.trim());
+      setOrder(updated);
+      setPromoInput("");
+    } catch (err) {
+      setPromoError(err instanceof ApiError ? err.message : "Tidak bisa terhubung ke server.");
+    } finally {
+      setIsApplyingPromo(false);
+    }
+  }
+
+  async function handleRemovePromo() {
+    if (!orderId) {
+      return;
+    }
+    setPromoError(null);
+    setIsApplyingPromo(true);
+    try {
+      const updated = await removePromoCode(orderId);
+      setOrder(updated);
+    } catch (err) {
+      setPromoError(err instanceof ApiError ? err.message : "Tidak bisa terhubung ke server.");
+    } finally {
+      setIsApplyingPromo(false);
     }
   }
 
@@ -323,6 +361,47 @@ export function OrderPage() {
               ))}
             </ul>
 
+            <div className="order-promo">
+              {order.promoCode ? (
+                <div className="order-promo-applied">
+                  <span>Kode: {order.promoCode}</span>
+                  <button type="button" onClick={handleRemovePromo} disabled={isApplyingPromo}>
+                    Hapus
+                  </button>
+                </div>
+              ) : (
+                <div className="order-promo-input">
+                  <input
+                    type="text"
+                    placeholder="Kode promo"
+                    value={promoInput}
+                    onChange={(event) => setPromoInput(event.target.value)}
+                    disabled={isApplyingPromo}
+                  />
+                  <button type="button" onClick={handleApplyPromo} disabled={isApplyingPromo || !promoInput.trim()}>
+                    Pakai
+                  </button>
+                </div>
+              )}
+              {promoError && (
+                <p className="order-error" role="alert">
+                  {promoError}
+                </p>
+              )}
+            </div>
+
+            {order.discountAmount > 0 && (
+              <div className="order-cart-subtotal">
+                <span>Subtotal</span>
+                <span>{formatRupiah(order.subtotal)}</span>
+              </div>
+            )}
+            {order.discountAmount > 0 && (
+              <div className="order-cart-discount">
+                <span>Diskon</span>
+                <span>-{formatRupiah(order.discountAmount)}</span>
+              </div>
+            )}
             <div className="order-cart-total">
               <span>Total</span>
               <span>{formatRupiah(order.totalAmount)}</span>

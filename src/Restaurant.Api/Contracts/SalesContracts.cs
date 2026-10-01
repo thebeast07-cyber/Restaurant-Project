@@ -30,6 +30,8 @@ public record AddOrderItemRequest(Guid ProductId, int Quantity, Guid? ProductVar
 
 public record UpdateOrderItemNotesRequest(string? Notes);
 
+public record ApplyPromoCodeRequest(string Code);
+
 public record OrderItemResponse(
     Guid Id,
     Guid ProductId,
@@ -47,6 +49,9 @@ public record OrderResponse(
     Guid? TableId,
     Guid ShiftId,
     OrderStatus Status,
+    decimal Subtotal,
+    string? PromoCode,
+    decimal DiscountAmount,
     decimal TotalAmount,
     List<OrderItemResponse> Items);
 

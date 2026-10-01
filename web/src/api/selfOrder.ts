@@ -65,6 +65,19 @@ export function getSelfOrder(orderId: string): Promise<Order> {
   return apiFetch<Order>(`/api/self-order/orders/${orderId}`);
 }
 
+export function applySelfOrderPromoCode(orderId: string, code: string): Promise<Order> {
+  return apiFetch<Order>(`/api/self-order/orders/${orderId}/promo-code`, {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function removeSelfOrderPromoCode(orderId: string): Promise<Order> {
+  return apiFetch<Order>(`/api/self-order/orders/${orderId}/promo-code`, {
+    method: "DELETE",
+  });
+}
+
 export function getReceipt(orderId: string): Promise<SelfOrderReceipt> {
   return apiFetch<SelfOrderReceipt>(`/api/self-order/receipts/${orderId}`);
 }

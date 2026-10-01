@@ -2,8 +2,10 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   addSelfOrderItem,
+  applySelfOrderPromoCode,
   getSelfOrder,
   getTableState,
+  removeSelfOrderPromoCode,
   startSelfOrder,
   type SelfOrderMenuItem,
   type SelfOrderTableState,
@@ -35,6 +37,9 @@ export function SelfOrderPage() {
   const [phone, setPhone] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [variantPickerItem, setVariantPickerItem] = useState<SelfOrderMenuItem | null>(null);
+  const [promoInput, setPromoInput] = useState("");
+  const [promoError, setPromoError] = useState<string | null>(null);
+  const [isApplyingPromo, setIsApplyingPromo] = useState(false);
 
   const pollRef = useRef<number | null>(null);
 
@@ -110,6 +115,35 @@ export function SelfOrderPage() {
       setVariantPickerItem(null);
     } catch (err) {
       handleError(err);
+    }
+  }
+
+  async function handleApplyPromo() {
+    if (!order || !promoInput.trim()) return;
+    setPromoError(null);
+    setIsApplyingPromo(true);
+    try {
+      const updated = await applySelfOrderPromoCode(order.id, promoInput.trim());
+      setOrder(updated);
+      setPromoInput("");
+    } catch (err) {
+      setPromoError(err instanceof ApiError ? err.message : "Tidak bisa terhubung ke server.");
+    } finally {
+      setIsApplyingPromo(false);
+    }
+  }
+
+  async function handleRemovePromo() {
+    if (!order) return;
+    setPromoError(null);
+    setIsApplyingPromo(true);
+    try {
+      const updated = await removeSelfOrderPromoCode(order.id);
+      setOrder(updated);
+    } catch (err) {
+      setPromoError(err instanceof ApiError ? err.message : "Tidak bisa terhubung ke server.");
+    } finally {
+      setIsApplyingPromo(false);
     }
   }
 
@@ -227,9 +261,43 @@ export function SelfOrderPage() {
                 </li>
               ))}
             </ul>
+            {order.discountAmount > 0 && (
+              <>
+                <div className="self-order-subtotal">Subtotal: {formatRupiah(order.subtotal)}</div>
+                <div className="self-order-discount">Diskon: -{formatRupiah(order.discountAmount)}</div>
+              </>
+            )}
             <div className="self-order-total">Total: {formatRupiah(order.totalAmount)}</div>
           </>
         )}
+
+        {order && order.items.length > 0 && (
+          <div className="self-order-promo">
+            {order.promoCode ? (
+              <div className="self-order-promo-applied">
+                <span>Kode: {order.promoCode}</span>
+                <button type="button" onClick={handleRemovePromo} disabled={isApplyingPromo}>
+                  Hapus
+                </button>
+              </div>
+            ) : (
+              <div className="self-order-promo-input">
+                <input
+                  type="text"
+                  placeholder="Kode promo"
+                  value={promoInput}
+                  onChange={(event) => setPromoInput(event.target.value)}
+                  disabled={isApplyingPromo}
+                />
+                <button type="button" onClick={handleApplyPromo} disabled={isApplyingPromo || !promoInput.trim()}>
+                  Pakai
+                </button>
+              </div>
+            )}
+            {promoError && <p className="self-order-error">{promoError}</p>}
+          </div>
+        )}
+
         <p className="self-order-hint">Sudah selesai pesan? Panggil staff untuk bayar di kasir.</p>
       </div>
 

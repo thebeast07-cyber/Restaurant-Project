@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Restaurant.Api.Contracts;
 using Restaurant.Domain.CRM;
+using Restaurant.Domain.Promotion;
 using Restaurant.Domain.Sales;
 using Restaurant.Infrastructure.Persistence;
 
@@ -194,7 +195,7 @@ public class SelfOrderController : ControllerBase
             return BadRequest(new { message = "Quantity must be greater than zero." });
         }
 
-        var order = await _db.Orders.SingleOrDefaultAsync(o => o.Id == orderId);
+        var order = await _db.Orders.Include(o => o.Items).SingleOrDefaultAsync(o => o.Id == orderId);
         if (order is null)
         {
             return NotFound();
@@ -249,9 +250,7 @@ public class SelfOrderController : ControllerBase
             Station = product.Station
         });
 
-        var newTotal = await _db.OrderItems.Where(i => i.OrderId == order.Id).SumAsync(i => i.Subtotal)
-            + unitPrice * request.Quantity;
-        order.TotalAmount = newTotal;
+        await RecalculateOrderTotalAsync(order);
 
         if (order.Status == OrderStatus.Draft)
         {
@@ -267,6 +266,74 @@ public class SelfOrderController : ControllerBase
     {
         var response = await BuildOrderResponse(orderId);
         return response is null ? NotFound() : Ok(response);
+    }
+
+    /// <summary>Same validation as OrdersController.ApplyPromoCode — see there for
+    /// why UsageLimit is only a soft check here (hard-enforced at Checkout).</summary>
+    [HttpPost("orders/{orderId:guid}/promo-code")]
+    public async Task<ActionResult<OrderResponse>> ApplyPromoCode(Guid orderId, ApplyPromoCodeRequest request)
+    {
+        var order = await _db.Orders.Include(o => o.Items).SingleOrDefaultAsync(o => o.Id == orderId);
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        if (order.Status is not (OrderStatus.Draft or OrderStatus.Open))
+        {
+            return BadRequest(new { message = $"Cannot apply a promo code to an order in status {order.Status}." });
+        }
+
+        var normalizedCode = request.Code.Trim().ToUpperInvariant();
+        var promo = await _db.PromoCodes.SingleOrDefaultAsync(p =>
+            p.TenantId == order.TenantId && p.BranchId == order.BranchId && p.Code == normalizedCode && p.IsActive);
+        if (promo is null)
+        {
+            return BadRequest(new { message = "Kode promo tidak ditemukan atau sudah tidak aktif." });
+        }
+
+        if (promo.ExpiresAt is not null && promo.ExpiresAt < DateOnly.FromDateTime(DateTime.UtcNow))
+        {
+            return BadRequest(new { message = "Kode promo sudah kedaluwarsa." });
+        }
+
+        if (promo.UsageLimit is not null && promo.UsageCount >= promo.UsageLimit)
+        {
+            return BadRequest(new { message = "Kuota kode promo sudah habis." });
+        }
+
+        var subtotal = order.Items.Sum(i => i.Subtotal);
+        if (promo.MinimumPurchase is not null && subtotal < promo.MinimumPurchase)
+        {
+            return BadRequest(new { message = $"Minimal belanja untuk kode ini adalah {promo.MinimumPurchase:C0}." });
+        }
+
+        order.PromoCodeId = promo.Id;
+        order.RecalculateTotal(promo.PercentageOff, promo.MinimumPurchase);
+        await _db.SaveChangesAsync();
+
+        return Ok(await BuildOrderResponse(order.Id));
+    }
+
+    [HttpDelete("orders/{orderId:guid}/promo-code")]
+    public async Task<ActionResult<OrderResponse>> RemovePromoCode(Guid orderId)
+    {
+        var order = await _db.Orders.Include(o => o.Items).SingleOrDefaultAsync(o => o.Id == orderId);
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        if (order.Status is not (OrderStatus.Draft or OrderStatus.Open))
+        {
+            return BadRequest(new { message = $"Cannot remove a promo code from an order in status {order.Status}." });
+        }
+
+        order.PromoCodeId = null;
+        order.RecalculateTotal();
+        await _db.SaveChangesAsync();
+
+        return Ok(await BuildOrderResponse(order.Id));
     }
 
     [HttpGet("receipts/{orderId:guid}")]
@@ -299,6 +366,19 @@ public class SelfOrderController : ControllerBase
         return Ok(new SelfOrderReceiptResponse(order.Id, tableNumber, order.CreatedAt, items, order.TotalAmount));
     }
 
+    /// <summary>Same reasoning as OrdersController's helper of the same name.</summary>
+    private async Task RecalculateOrderTotalAsync(Order order)
+    {
+        if (order.PromoCodeId is null)
+        {
+            order.RecalculateTotal();
+            return;
+        }
+
+        var promo = await _db.PromoCodes.SingleAsync(p => p.Id == order.PromoCodeId);
+        order.RecalculateTotal(promo.PercentageOff, promo.MinimumPurchase);
+    }
+
     private async Task<OrderResponse?> BuildOrderResponse(Guid orderId)
     {
         // AsNoTracking: same reasoning as OrdersController.BuildOrderResponse — Status
@@ -314,12 +394,18 @@ public class SelfOrderController : ControllerBase
         var productNames = await _db.Products.Where(p => productIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id, p => p.Name);
         var variantIds = order.Items.Where(i => i.ProductVariantId is not null).Select(i => i.ProductVariantId!.Value).Distinct().ToList();
         var variantNames = await _db.ProductVariants.Where(v => variantIds.Contains(v.Id)).ToDictionaryAsync(v => v.Id, v => v.Name);
+        var promoCode = order.PromoCodeId is null
+            ? null
+            : await _db.PromoCodes.Where(p => p.Id == order.PromoCodeId).Select(p => p.Code).SingleOrDefaultAsync();
 
         return new OrderResponse(
             order.Id,
             order.TableId,
             order.ShiftId,
             order.Status,
+            order.Subtotal,
+            promoCode,
+            order.DiscountAmount,
             order.TotalAmount,
             order.Items.Select(i => new OrderItemResponse(
                 i.Id, i.ProductId, productNames.GetValueOrDefault(i.ProductId, "?"),

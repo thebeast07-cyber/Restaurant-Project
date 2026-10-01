@@ -50,6 +50,9 @@ export function DashboardPage() {
             <button type="button" onClick={() => navigate("/hr")}>
               HR
             </button>
+            <button type="button" onClick={() => navigate("/promo-codes")}>
+              Kode Promo
+            </button>
           </>
         )}
       </nav>

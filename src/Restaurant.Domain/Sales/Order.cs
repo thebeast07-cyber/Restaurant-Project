@@ -35,13 +35,32 @@ public class Order : Entity, IBranchScoped
     /// don't overwrite it.</summary>
     public Guid? CustomerId { get; set; }
     public OrderStatus Status { get; set; } = OrderStatus.Draft;
+    public decimal Subtotal { get; set; }
     public decimal TotalAmount { get; set; }
+
+    /// <summary>Set while a PromoCode is attached (see OrdersController's
+    /// promo-code endpoints) — null for an Order with no discount. Kept even after
+    /// Checkout as a record of which code produced DiscountAmount.</summary>
+    public Guid? PromoCodeId { get; set; }
+
+    /// <summary>
+    /// Recomputed from Subtotal on every RecalculateTotal call, not frozen at the
+    /// moment the code was attached — a percentage discount should track the cart as
+    /// items are added/removed, same as the rest of TotalAmount. Zero (not an error)
+    /// whenever Subtotal no longer meets the attached PromoCode's MinimumPurchase;
+    /// the code stays attached so re-adding items revives the discount automatically.
+    /// </summary>
+    public decimal DiscountAmount { get; set; }
 
     public List<OrderItem> Items { get; set; } = [];
 
-    public void RecalculateTotal()
+    public void RecalculateTotal(decimal? promoPercentageOff = null, decimal? promoMinimumPurchase = null)
     {
-        TotalAmount = Items.Sum(i => i.Subtotal);
+        Subtotal = Items.Sum(i => i.Subtotal);
+        DiscountAmount = promoPercentageOff is not null && (promoMinimumPurchase is null || Subtotal >= promoMinimumPurchase)
+            ? Math.Round(Subtotal * promoPercentageOff.Value / 100, 2)
+            : 0;
+        TotalAmount = Subtotal - DiscountAmount;
     }
 }
 
