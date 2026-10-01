@@ -2,8 +2,10 @@ using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Restaurant.Domain.Audit;
 using Restaurant.Domain.Catalog;
+using Restaurant.Domain.CRM;
 using Restaurant.Domain.Common;
 using Restaurant.Domain.Finance;
+using Restaurant.Domain.HR;
 using Restaurant.Domain.Identity;
 using Restaurant.Domain.Inventory;
 using Restaurant.Domain.Organization;
@@ -36,6 +38,8 @@ public class AppDbContext : DbContext
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<Stock> Stocks => Set<Stock>();
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
+    public DbSet<StockOpnameSession> StockOpnameSessions => Set<StockOpnameSession>();
+    public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<JournalEntry> JournalEntries => Set<JournalEntry>();
     public DbSet<JournalLine> JournalLines => Set<JournalLine>();
@@ -50,6 +54,10 @@ public class AppDbContext : DbContext
     public DbSet<PurchasePayment> PurchasePayments => Set<PurchasePayment>();
     public DbSet<OperatingExpense> OperatingExpenses => Set<OperatingExpense>();
     public DbSet<OperatingExpensePayment> OperatingExpensePayments => Set<OperatingExpensePayment>();
+    public DbSet<Employee> Employees => Set<Employee>();
+    public DbSet<Attendance> Attendances => Set<Attendance>();
+    public DbSet<Kasbon> Kasbons => Set<Kasbon>();
+    public DbSet<Payslip> Payslips => Set<Payslip>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -122,6 +130,13 @@ public class AppDbContext : DbContext
             o.HasIndex(x => new { x.TenantId, x.BranchId, x.Status });
             o.HasOne<RestaurantTable>().WithMany().HasForeignKey(x => x.TableId).OnDelete(DeleteBehavior.Restrict);
             o.HasOne<Shift>().WithMany().HasForeignKey(x => x.ShiftId).OnDelete(DeleteBehavior.Restrict);
+            o.HasOne<Customer>().WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Customer>(c =>
+        {
+            c.ToTable("customers");
+            c.HasIndex(x => new { x.TenantId, x.BranchId, x.Phone }).IsUnique();
         });
 
         modelBuilder.Entity<OrderItem>(oi =>
@@ -143,7 +158,15 @@ public class AppDbContext : DbContext
         {
             sm.ToTable("stock_movements");
             sm.HasIndex(x => new { x.TenantId, x.BranchId, x.IngredientId });
+            sm.HasIndex(x => x.OpnameSessionId);
             sm.HasOne<Ingredient>().WithMany().HasForeignKey(x => x.IngredientId).OnDelete(DeleteBehavior.Restrict);
+            sm.HasOne<StockOpnameSession>().WithMany().HasForeignKey(x => x.OpnameSessionId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<StockOpnameSession>(s =>
+        {
+            s.ToTable("stock_opname_sessions");
+            s.HasIndex(x => new { x.TenantId, x.BranchId });
         });
 
         modelBuilder.Entity<Account>(a =>
@@ -240,6 +263,35 @@ public class AppDbContext : DbContext
             oep.ToTable("operating_expense_payments");
             oep.HasIndex(x => x.OperatingExpenseId);
             oep.HasOne<OperatingExpense>().WithMany().HasForeignKey(x => x.OperatingExpenseId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Employee>(e =>
+        {
+            e.ToTable("employees");
+            e.HasIndex(x => new { x.TenantId, x.BranchId });
+            e.HasOne<User>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<Attendance>(a =>
+        {
+            a.ToTable("attendances");
+            a.HasIndex(x => new { x.TenantId, x.BranchId, x.EmployeeId, x.Date }).IsUnique();
+            a.HasOne<Employee>().WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Kasbon>(k =>
+        {
+            k.ToTable("kasbons");
+            k.HasIndex(x => new { x.TenantId, x.BranchId, x.EmployeeId, x.Status });
+            k.HasOne<Employee>().WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Payslip>(p =>
+        {
+            p.ToTable("payslips");
+            p.HasIndex(x => new { x.TenantId, x.BranchId, x.EmployeeId, x.PeriodYear, x.PeriodMonth }).IsUnique();
+            p.HasOne<Employee>().WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+            p.HasOne<OperatingExpense>().WithMany().HasForeignKey(x => x.OperatingExpenseId).OnDelete(DeleteBehavior.Restrict);
         });
 
         ApplyTenantQueryFilters(modelBuilder);

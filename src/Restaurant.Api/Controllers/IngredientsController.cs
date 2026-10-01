@@ -220,7 +220,8 @@ public class IngredientsController : ControllerBase
             // Snapshot for Waste/ManualAdjustment only — Opname is a count
             // correction, not a valued loss/gain, so a cost figure isn't meaningful
             // for it. See GET /api/reports/waste, the reader of this field.
-            UnitCostAtTime = reason is StockMovementReason.Waste or StockMovementReason.ManualAdjustment ? averageCost : null
+            UnitCostAtTime = reason is StockMovementReason.Waste or StockMovementReason.ManualAdjustment ? averageCost : null,
+            QuantityBefore = reason is StockMovementReason.Opname ? quantityBefore : null
         });
 
         _db.AuditLogs.Add(new AuditLog

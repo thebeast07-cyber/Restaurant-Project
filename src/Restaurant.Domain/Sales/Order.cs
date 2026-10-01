@@ -28,6 +28,12 @@ public class Order : Entity, IBranchScoped
     public required Guid BranchId { get; set; }
     public Guid? TableId { get; set; }
     public required Guid ShiftId { get; set; }
+
+    /// <summary>Set for a Self-Order (captured at the start of that flow) — null for
+    /// an order a staff member entered without asking for the customer's contact.
+    /// Stays whoever started the table's tab; later submissions to the same Order
+    /// don't overwrite it.</summary>
+    public Guid? CustomerId { get; set; }
     public OrderStatus Status { get; set; } = OrderStatus.Draft;
     public decimal TotalAmount { get; set; }
 

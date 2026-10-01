@@ -27,6 +27,9 @@ export function PurchasingPage() {
         <button type="button" onClick={() => navigate("/purchasing/purchases")}>
           Pembelian &amp; Pembayaran
         </button>
+        <button type="button" onClick={() => navigate("/purchasing/stock-opname")}>
+          Stock Opname
+        </button>
       </nav>
     </main>
   );

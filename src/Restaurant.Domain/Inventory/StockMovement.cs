@@ -39,6 +39,12 @@ public class StockMovement : Entity, IBranchScoped
     public required Guid ReferenceId { get; set; }
     public Guid? CreatedByUserId { get; set; }
 
+    /// <summary>Set only for an Opname recorded as part of a batched
+    /// <see cref="StockOpnameSession"/> (StockOpnameController) — null for a
+    /// single-ingredient Opname via IngredientsController.AdjustStock, and for every
+    /// other Reason.</summary>
+    public Guid? OpnameSessionId { get; set; }
+
     /// <summary>
     /// Snapshot of Ingredient.AverageCost at the moment this movement was recorded —
     /// null for movements where a cost snapshot isn't meaningful (Sale/Void post COGS
@@ -49,4 +55,15 @@ public class StockMovement : Entity, IBranchScoped
     /// real Rupiah figure instead of just a quantity.
     /// </summary>
     public decimal? UnitCostAtTime { get; set; }
+
+    /// <summary>
+    /// Quantity immediately before this movement applied — populated only for Opname
+    /// (both the single-ingredient endpoint and a batched StockOpnameSession), same
+    /// "nullable, reason-specific" pattern as UnitCostAtTime above. Every other Reason
+    /// is a pure delta (Sale/Purchase/etc. don't need a "before" to be meaningful),
+    /// but Opname's whole point is showing what was counted against what the system
+    /// said, so the before value is worth keeping rather than re-derived later from
+    /// current Stock.Quantity (which may have moved on from other movements since).
+    /// </summary>
+    public decimal? QuantityBefore { get; set; }
 }

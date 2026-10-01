@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Restaurant.Domain.Catalog;
 using Restaurant.Domain.Finance;
+using Restaurant.Domain.HR;
 using Restaurant.Domain.Identity;
 using Restaurant.Domain.Inventory;
 using Restaurant.Domain.Organization;
@@ -148,6 +149,44 @@ public static class DataSeeder
         db.PaymentMethods.AddRange(
             new PaymentMethod { TenantId = tenant.Id, Code = PaymentMethodCode.Cash, Name = "Cash" },
             new PaymentMethod { TenantId = tenant.Id, Code = PaymentMethodCode.Qris, Name = "QRIS" });
+
+        // HR sample data (Phase 2 of the Majoo-parity expansion, see docs/architecture/
+        // 02-ui-roadmap.md item 2). One Employee links to the seeded Cashier User (staff
+        // who both clock in and work the register); the other two have no POS login at
+        // all, demonstrating why Employee is modeled separately from User.
+        var cashierUser = db.Users.Local.Single(u => u.Username == "cashier");
+        db.Employees.AddRange(
+            new Employee
+            {
+                TenantId = tenant.Id,
+                BranchId = branch.Id,
+                UserId = cashierUser.Id,
+                Name = "Cashier",
+                Position = "Kasir",
+                BaseSalary = 3_500_000m,
+                HireDate = new DateOnly(2026, 1, 10),
+                PinHash = BCrypt.Net.BCrypt.HashPassword("3333")
+            },
+            new Employee
+            {
+                TenantId = tenant.Id,
+                BranchId = branch.Id,
+                Name = "Juru Masak",
+                Position = "Juru Masak",
+                BaseSalary = 4_000_000m,
+                HireDate = new DateOnly(2025, 11, 1),
+                PinHash = BCrypt.Net.BCrypt.HashPassword("4444")
+            },
+            new Employee
+            {
+                TenantId = tenant.Id,
+                BranchId = branch.Id,
+                Name = "Pelayan",
+                Position = "Pelayan",
+                BaseSalary = 2_800_000m,
+                HireDate = new DateOnly(2026, 3, 1),
+                PinHash = BCrypt.Net.BCrypt.HashPassword("5555")
+            });
 
         await db.SaveChangesAsync();
     }

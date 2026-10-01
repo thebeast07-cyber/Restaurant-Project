@@ -88,3 +88,19 @@
 .table-tile--occupied .table-tile-status {
   color: var(--accent-text);
 }
+
+.table-tile-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.table-tile-qr-btn {
+  font-size: 11px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}

@@ -1,0 +1,131 @@
+.self-order-page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 20px 16px 120px;
+  font-family: inherit;
+}
+
+.self-order-page h1 {
+  font-size: 18px;
+  margin: 0 0 16px;
+}
+
+.self-order-error {
+  background: var(--danger-bg, #fde8e8);
+  color: var(--danger, #b2453b);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.self-order-notice {
+  font-size: 15px;
+  margin-bottom: 16px;
+}
+
+.self-order-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.self-order-form label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.self-order-form input,
+.self-order-form button {
+  padding: 10px 12px;
+  font-size: 15px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #d9d6cc);
+}
+
+.self-order-form button,
+.self-order-cart button {
+  background: var(--accent, #2b6e62);
+  color: #fff;
+  border: none;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.self-order-category {
+  margin-bottom: 20px;
+}
+
+.self-order-category h2 {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim, #666);
+  margin: 0 0 8px;
+}
+
+.self-order-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border, #eee);
+  gap: 12px;
+}
+
+.self-order-menu-item-name {
+  font-weight: 500;
+}
+
+.self-order-menu-item-price {
+  font-size: 13px;
+  color: var(--text-dim, #666);
+}
+
+.self-order-menu-item button {
+  padding: 6px 14px;
+  border-radius: 100px;
+  border: 1px solid var(--accent, #2b6e62);
+  background: transparent;
+  color: var(--accent, #2b6e62);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.self-order-cart {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--surface, #fff);
+  border-top: 1px solid var(--border, #ddd);
+  padding: 14px 16px 20px;
+  max-width: 480px;
+  margin: 0 auto;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.08);
+}
+
+.self-order-cart h2 {
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+
+.self-order-cart ul {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  font-size: 14px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.self-order-total {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.self-order-hint {
+  font-size: 12px;
+  color: var(--text-dim, #666);
+  margin: 8px 0 0;
+}

@@ -30,6 +30,9 @@ export function DashboardPage() {
         <button type="button" onClick={() => navigate("/shift")}>
           Shift
         </button>
+        <button type="button" onClick={() => navigate("/hr/attendance")}>
+          Absensi
+        </button>
         {(user?.role === "Owner" || user?.role === "Manager") && (
           <>
             <button type="button" onClick={() => navigate("/purchasing")}>
@@ -43,6 +46,9 @@ export function DashboardPage() {
             </button>
             <button type="button" onClick={() => navigate("/finance")}>
               Finance
+            </button>
+            <button type="button" onClick={() => navigate("/hr")}>
+              HR
             </button>
           </>
         )}
