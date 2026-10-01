@@ -26,9 +26,11 @@ public record ShiftCloseResponse(
 
 public record CreateOrderRequest(Guid? TableId);
 
-public record AddOrderItemRequest(Guid ProductId, int Quantity);
+public record AddOrderItemRequest(Guid ProductId, int Quantity, string? Notes = null);
 
-public record OrderItemResponse(Guid Id, Guid ProductId, string ProductName, int Quantity, decimal UnitPrice, decimal Subtotal, Station Station);
+public record UpdateOrderItemNotesRequest(string? Notes);
+
+public record OrderItemResponse(Guid Id, Guid ProductId, string ProductName, int Quantity, decimal UnitPrice, decimal Subtotal, Station Station, string? Notes);
 
 public record OrderResponse(
     Guid Id,
@@ -38,8 +40,8 @@ public record OrderResponse(
     decimal TotalAmount,
     List<OrderItemResponse> Items);
 
-public record CheckoutRequest(PaymentMethodCode PaymentMethod);
+public record CheckoutRequest(PaymentMethodCode PaymentMethod, decimal? AmountTendered = null);
 
-public record CheckoutResponse(OrderResponse Order, Guid PaymentId, decimal AmountPaid, Guid JournalEntryId);
+public record CheckoutResponse(OrderResponse Order, Guid PaymentId, decimal AmountPaid, Guid JournalEntryId, decimal ChangeDue);
 
 public record SendToStationResponse(OrderResponse Order, List<StationTicket> Tickets);

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import QRCode from "qrcode";
 import { listCategories, type Category } from "../api/categories";
 import { listProducts, type Product } from "../api/products";
 import {
@@ -7,6 +8,8 @@ import {
   cancelOrder,
   checkoutOrder,
   getOrder,
+  removeOrderItem,
+  updateOrderItemNotes,
   voidOrder,
   type Order,
   type PaymentMethodCode,
@@ -35,7 +38,17 @@ export function OrderPage() {
   const [paymentConfirmation, setPaymentConfirmation] = useState<{
     paymentMethod: PaymentMethodCode;
     amount: number;
+    changeDue: number;
   } | null>(null);
+  const [receiptQrUrl, setReceiptQrUrl] = useState<string | null>(null);
+  const [showCashModal, setShowCashModal] = useState(false);
+  const [cashTendered, setCashTendered] = useState("");
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!paymentConfirmation || !orderId) return;
+    QRCode.toDataURL(`${window.location.origin}/receipt/${orderId}`, { width: 200, margin: 1 }).then(setReceiptQrUrl);
+  }, [paymentConfirmation, orderId]);
 
   useEffect(() => {
     if (!orderId) {
@@ -67,20 +80,50 @@ export function OrderPage() {
     }
   }
 
-  async function handleCheckout(paymentMethod: PaymentMethodCode) {
+  async function handleCheckout(paymentMethod: PaymentMethodCode, amountTendered?: number) {
     if (!orderId) {
       return;
     }
     setError(null);
     setIsBusy(true);
     try {
-      const result = await checkoutOrder(orderId, paymentMethod);
+      const result = await checkoutOrder(orderId, paymentMethod, amountTendered);
       setOrder(result.order);
-      setPaymentConfirmation({ paymentMethod, amount: result.amountPaid });
+      setShowCashModal(false);
+      setPaymentConfirmation({ paymentMethod, amount: result.amountPaid, changeDue: result.changeDue });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Tidak bisa terhubung ke server.");
     } finally {
       setIsBusy(false);
+    }
+  }
+
+  async function handleRemoveItem(itemId: string) {
+    if (!orderId) {
+      return;
+    }
+    setError(null);
+    setIsBusy(true);
+    try {
+      const updated = await removeOrderItem(orderId, itemId);
+      setOrder(updated);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Tidak bisa terhubung ke server.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleSaveNote(itemId: string, notes: string) {
+    if (!orderId) {
+      return;
+    }
+    setError(null);
+    try {
+      const updated = await updateOrderItemNotes(orderId, itemId, notes);
+      setOrder(updated);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Tidak bisa terhubung ke server.");
     }
   }
 
@@ -141,6 +184,17 @@ export function OrderPage() {
           <p className="order-payment-confirmation-method">
             {paymentConfirmation.paymentMethod === "Cash" ? "Tunai" : "QRIS"}
           </p>
+          {paymentConfirmation.paymentMethod === "Cash" && paymentConfirmation.changeDue > 0 && (
+            <p className="order-payment-confirmation-change">
+              Kembalian: {formatRupiah(paymentConfirmation.changeDue)}
+            </p>
+          )}
+          {receiptQrUrl && (
+            <div className="order-receipt-qr">
+              <p>Struk digital — scan untuk lihat/unduh</p>
+              <img src={receiptQrUrl} alt="QR struk digital" width={160} height={160} />
+            </div>
+          )}
           <button type="button" onClick={() => navigate("/tables")}>
             Kembali ke Meja
           </button>
@@ -216,11 +270,38 @@ export function OrderPage() {
             <ul className="order-cart-items">
               {order.items.length === 0 && <li className="order-cart-empty">Belum ada item.</li>}
               {order.items.map((item) => (
-                <li key={item.id}>
-                  <span>
-                    {item.quantity}× {item.productName}
-                  </span>
-                  <span>{formatRupiah(item.subtotal)}</span>
+                <li key={item.id} className="order-cart-item">
+                  <div className="order-cart-item-row">
+                    <span>
+                      {item.quantity}× {item.productName}
+                    </span>
+                    <span>{formatRupiah(item.subtotal)}</span>
+                    <button
+                      type="button"
+                      className="order-cart-item-remove"
+                      disabled={isBusy}
+                      onClick={() => handleRemoveItem(item.id)}
+                      aria-label={`Hapus ${item.productName}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    className="order-cart-item-note"
+                    placeholder="Catatan (mis. tanpa es)"
+                    value={noteDrafts[item.id] ?? item.notes ?? ""}
+                    disabled={isBusy}
+                    onChange={(event) =>
+                      setNoteDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))
+                    }
+                    onBlur={(event) => {
+                      const value = event.target.value.trim();
+                      if (value !== (item.notes ?? "")) {
+                        handleSaveNote(item.id, value);
+                      }
+                    }}
+                  />
                 </li>
               ))}
             </ul>
@@ -234,7 +315,10 @@ export function OrderPage() {
               <button
                 type="button"
                 disabled={isBusy || order.items.length === 0}
-                onClick={() => handleCheckout("Cash")}
+                onClick={() => {
+                  setCashTendered("");
+                  setShowCashModal(true);
+                }}
               >
                 Bayar Tunai
               </button>
@@ -250,6 +334,53 @@ export function OrderPage() {
               </button>
             </div>
           </aside>
+        </div>
+      )}
+
+      {showCashModal && (
+        <div className="order-void-overlay">
+          <form
+            className="order-void-card"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const tendered = Number(cashTendered);
+              handleCheckout("Cash", Number.isFinite(tendered) && tendered > 0 ? tendered : order.totalAmount);
+            }}
+          >
+            <h2>Bayar Tunai</h2>
+            <p>Total: {formatRupiah(order.totalAmount)}</p>
+            <label htmlFor="cashTendered">Uang Diterima</label>
+            <input
+              id="cashTendered"
+              type="number"
+              inputMode="numeric"
+              min={order.totalAmount}
+              value={cashTendered}
+              onChange={(event) => setCashTendered(event.target.value)}
+              autoFocus
+            />
+            {cashTendered !== "" && Number(cashTendered) >= order.totalAmount && (
+              <p className="order-cash-change">
+                Kembalian: {formatRupiah(Number(cashTendered) - order.totalAmount)}
+              </p>
+            )}
+            {cashTendered !== "" && Number(cashTendered) < order.totalAmount && (
+              <p className="order-error" role="alert">
+                Uang diterima kurang dari total.
+              </p>
+            )}
+            <div className="order-void-actions">
+              <button type="button" className="order-void-cancel" onClick={() => setShowCashModal(false)}>
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={isBusy || (cashTendered !== "" && Number(cashTendered) < order.totalAmount)}
+              >
+                {isBusy ? "Memproses..." : "Konfirmasi"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

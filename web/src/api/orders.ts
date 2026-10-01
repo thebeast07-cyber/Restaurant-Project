@@ -12,6 +12,7 @@ export interface OrderItem {
   unitPrice: number;
   subtotal: number;
   station: Station;
+  notes: string | null;
 }
 
 export interface Order {
@@ -28,6 +29,7 @@ export interface CheckoutResult {
   paymentId: string;
   amountPaid: number;
   journalEntryId: string;
+  changeDue: number;
 }
 
 export interface VoidResult {
@@ -46,17 +48,39 @@ export function getOrder(orderId: string): Promise<Order> {
   return apiFetch<Order>(`/api/orders/${orderId}`);
 }
 
-export function addOrderItem(orderId: string, productId: string, quantity: number): Promise<Order> {
+export function addOrderItem(
+  orderId: string,
+  productId: string,
+  quantity: number,
+  notes?: string,
+): Promise<Order> {
   return apiFetch<Order>(`/api/orders/${orderId}/items`, {
     method: "POST",
-    body: JSON.stringify({ productId, quantity }),
+    body: JSON.stringify({ productId, quantity, notes: notes || null }),
   });
 }
 
-export function checkoutOrder(orderId: string, paymentMethod: PaymentMethodCode): Promise<CheckoutResult> {
+export function removeOrderItem(orderId: string, itemId: string): Promise<Order> {
+  return apiFetch<Order>(`/api/orders/${orderId}/items/${itemId}`, {
+    method: "DELETE",
+  });
+}
+
+export function updateOrderItemNotes(orderId: string, itemId: string, notes: string): Promise<Order> {
+  return apiFetch<Order>(`/api/orders/${orderId}/items/${itemId}/notes`, {
+    method: "PUT",
+    body: JSON.stringify({ notes: notes || null }),
+  });
+}
+
+export function checkoutOrder(
+  orderId: string,
+  paymentMethod: PaymentMethodCode,
+  amountTendered?: number,
+): Promise<CheckoutResult> {
   return apiFetch<CheckoutResult>(`/api/orders/${orderId}/checkout`, {
     method: "POST",
-    body: JSON.stringify({ paymentMethod }),
+    body: JSON.stringify({ paymentMethod, amountTendered: amountTendered ?? null }),
   });
 }
 

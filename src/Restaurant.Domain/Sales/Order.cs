@@ -57,6 +57,9 @@ public class OrderItem : Entity, ITenantScoped
     /// <summary>Denormalized from Product at add-time so ticket routing survives later menu edits.</summary>
     public required Station Station { get; set; }
 
+    /// <summary>Free-text instruction for this line (e.g. "tanpa es", "pedas level 2") — printed on the station ticket.</summary>
+    public string? Notes { get; set; }
+
     /// <summary>
     /// This line's share of Recipe-derived ingredient cost, snapshotted at Checkout —
     /// null for every OrderItem that predates this field (the per-product margin

@@ -159,7 +159,8 @@ public class OrdersController : ControllerBase
             Quantity = request.Quantity,
             UnitPrice = product.Price,
             Subtotal = product.Price * request.Quantity,
-            Station = product.Station
+            Station = product.Station,
+            Notes = request.Notes
         };
 
         // EF Core relationship fixup automatically appends `item` into order.Items
@@ -170,6 +171,60 @@ public class OrdersController : ControllerBase
         await _db.SaveChangesAsync();
 
         return Ok(await BuildOrderResponse(order.Id));
+    }
+
+    [HttpDelete("{orderId:guid}/items/{itemId:guid}")]
+    public async Task<ActionResult<OrderResponse>> RemoveItem(Guid orderId, Guid itemId)
+    {
+        var order = await _db.Orders.Include(o => o.Items).SingleOrDefaultAsync(o => o.Id == orderId);
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        if (order.Status is not (OrderStatus.Draft or OrderStatus.Open))
+        {
+            return BadRequest(new { message = $"Cannot remove items from an order in status {order.Status}." });
+        }
+
+        var item = order.Items.SingleOrDefault(i => i.Id == itemId);
+        if (item is null)
+        {
+            return NotFound();
+        }
+
+        _db.OrderItems.Remove(item);
+        order.Items.Remove(item);
+        order.RecalculateTotal();
+        await _db.SaveChangesAsync();
+
+        return Ok(await BuildOrderResponse(order.Id));
+    }
+
+    [HttpPut("{orderId:guid}/items/{itemId:guid}/notes")]
+    public async Task<ActionResult<OrderResponse>> UpdateItemNotes(Guid orderId, Guid itemId, UpdateOrderItemNotesRequest request)
+    {
+        var order = await _db.Orders.SingleOrDefaultAsync(o => o.Id == orderId);
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        if (order.Status is not (OrderStatus.Draft or OrderStatus.Open))
+        {
+            return BadRequest(new { message = $"Cannot edit items on an order in status {order.Status}." });
+        }
+
+        var rowsAffected = await _db.OrderItems
+            .Where(i => i.Id == itemId && i.OrderId == orderId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(i => i.Notes, request.Notes));
+
+        if (rowsAffected == 0)
+        {
+            return NotFound();
+        }
+
+        return Ok(await BuildOrderResponse(orderId));
     }
 
     /// <summary>
@@ -259,6 +314,19 @@ public class OrdersController : ControllerBase
         if (paymentMethod is null)
         {
             return BadRequest(new { message = $"Payment method {request.PaymentMethod} is not configured." });
+        }
+
+        // Change is only meaningful for Cash — QRIS always settles the exact amount.
+        decimal changeDue = 0;
+        if (request.PaymentMethod == DomainPayment.PaymentMethodCode.Cash)
+        {
+            var amountTendered = request.AmountTendered ?? order.TotalAmount;
+            if (amountTendered < order.TotalAmount)
+            {
+                return BadRequest(new { message = "Amount tendered is less than the order total." });
+            }
+
+            changeDue = amountTendered - order.TotalAmount;
         }
 
         // --- 1. Compute Ingredient requirements from Recipe, aggregated across items ---
@@ -439,7 +507,7 @@ public class OrdersController : ControllerBase
         await transaction.CommitAsync();
 
         var orderResponse = await BuildOrderResponse(order.Id);
-        return Ok(new CheckoutResponse(orderResponse!, payment.Id, payment.Amount, journalEntry.Id));
+        return Ok(new CheckoutResponse(orderResponse!, payment.Id, payment.Amount, journalEntry.Id, changeDue));
     }
 
     /// <summary>
@@ -610,7 +678,7 @@ public class OrdersController : ControllerBase
             order.Status,
             order.TotalAmount,
             order.Items.Select(i => new OrderItemResponse(
-                i.Id, i.ProductId, productNames.GetValueOrDefault(i.ProductId, "?"), i.Quantity, i.UnitPrice, i.Subtotal, i.Station))
+                i.Id, i.ProductId, productNames.GetValueOrDefault(i.ProductId, "?"), i.Quantity, i.UnitPrice, i.Subtotal, i.Station, i.Notes))
                 .ToList());
     }
 }
