@@ -20,11 +20,15 @@ builder.Services.AddOpenApi();
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
 
-var connectionString = builder.Configuration.GetConnectionString("Default")
-    ?? throw new InvalidOperationException("ConnectionStrings:Default is not configured.");
-
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString));
+builder.Services.AddDbContext<AppDbContext>((sp, options) =>
+{
+    // Resolved lazily from DI (not captured into a local at builder-config time) so
+    // that WebApplicationFactory.ConfigureAppConfiguration overrides in tests — which
+    // only take effect once Build() runs — are actually picked up.
+    var connectionString = sp.GetRequiredService<IConfiguration>().GetConnectionString("Default")
+        ?? throw new InvalidOperationException("ConnectionStrings:Default is not configured.");
+    options.UseNpgsql(connectionString);
+});
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentTenantProvider, HttpCurrentTenantProvider>();

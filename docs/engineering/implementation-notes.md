@@ -1105,20 +1105,39 @@ See `docs/architecture/01-mvp-technical-design.md` §"Scope Recap" for the full 
 Two worth calling out here because they're partial/coupled to what's built:
 - Login-by-username-only breaks with a second Tenant (see Identity notes above).
 - `Shift` close now exists (Day 11) but there's still no UI for it — API only.
-- **Test-class isolation**: `TestWebApplicationFactory` runs every test class against
-  the same live dev Postgres (already flagged in that file as a fast-follow), and
-  xUnit runs different test classes in parallel by default. Confirmed while verifying
-  Day 11: running the full suite normally intermittently fails a *different*
-  concurrency-heavy test each time (`StockRaceConditionTests`, `CheckoutLoadTests`,
-  `TableClaimRaceTests`) with a `500` from two test classes' `EnsureShiftOpenAsync`/
-  table-claim logic genuinely colliding on the same seeded `cashier` account and
-  Tables — this reproduces identically on commits before Day 11 too, so it's
-  pre-existing, not a regression. Running with test-collection parallelization off
-  (`dotnet test -- xUnit.ParallelizeTestCollections=false`) passes 7/7 reliably.
-  Also: resetting the dev DB (`docker compose down -v`) right before running the full
-  suite can trigger a *second*, sharper failure — multiple test classes' parallel
-  `WebApplicationFactory` startups race `DataSeeder`'s check-then-insert seed guard on
-  a truly empty DB, seeding several `Tenant` rows instead of one (seen: 6). Seeding
-  once via a single `dotnet run` before running tests avoids it. Proper fix is
-  disabling xUnit collection parallelization for this assembly (or giving each test
-  class its own tenant/user), not done yet.
+- ~~**Test-class isolation**~~ — **Resolved.** `TestWebApplicationFactory` used to run
+  every test class against the same live dev Postgres, which (a) littered
+  `restaurant_db` with hundreds of `RaceTest-*`/`StressTest-*`/`LoadTest-*`/etc. rows
+  on every `dotnet test` run, and (b) caused the parallelism bugs described below.
+  Fixed by giving each test class ( `IClassFixture<TestWebApplicationFactory>` — one
+  instance per class) its own disposable Postgres container via
+  `Testcontainers.PostgreSql`: the factory starts a fresh `postgres:16-alpine`
+  container in `IAsyncLifetime.InitializeAsync` and overrides
+  `ConnectionStrings:Default` through `ConfigureWebHost`/`ConfigureAppConfiguration`
+  before the host builds, then tears the container down in `DisposeAsync`. Since no
+  test class shares a database with another anymore, the cross-class collisions below
+  disappear as a side effect — no need to also disable xUnit collection
+  parallelization.
+  - **Gotcha that cost real debugging time**: the connection-string override had no
+    effect at first. `Program.cs` captured
+    `builder.Configuration.GetConnectionString("Default")` into a local variable
+    *before* `builder.Build()`, but `WebApplicationFactory`'s config overrides for a
+    minimal-hosting `Program.cs` are only spliced in at the moment `Build()` runs —
+    too late for a value already read into a local. Fixed by resolving the connection
+    string lazily inside `AddDbContext<AppDbContext>((sp, options) => ...)` via
+    `sp.GetRequiredService<IConfiguration>()` instead of a captured local, so it's read
+    at DbContext-creation time (after the test host is fully built) rather than at
+    builder-config time.
+  - Verified by running the full suite twice in a row and diffing `restaurant_db` row
+    counts (`products`/`categories`/`suppliers`/`orders`) before and after both runs —
+    identical both times, confirming tests no longer touch the dev database at all.
+  - Historical context (now moot, kept for the record): running the full suite against
+    the shared dev DB intermittently failed a *different* concurrency-heavy test each
+    time (`StockRaceConditionTests`, `CheckoutLoadTests`, `TableClaimRaceTests`) with a
+    `500` from two test classes' `EnsureShiftOpenAsync`/table-claim logic genuinely
+    colliding on the same seeded `cashier` account and Tables. Resetting the dev DB
+    (`docker compose down -v`) right before a full run could also trigger parallel
+    `WebApplicationFactory` startups racing `DataSeeder`'s check-then-insert seed guard
+    on a truly empty DB, seeding several `Tenant` rows instead of one (seen: 6). Both
+    were artifacts of sharing one database across parallel test classes and no longer
+    apply now that each class gets its own container.

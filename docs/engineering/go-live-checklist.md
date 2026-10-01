@@ -92,12 +92,10 @@ so go-live is a conscious choice about each one, not a silent assumption.
    explicitly with management before go-live: is Purchasing required for day-one
    operation (e.g. is initial stock only ever set via Opname, with no formal PO/GRN
    flow), or was it meant to be in this sprint and got dropped?
-7. **Test-suite isolation.** All test classes share the single dev Postgres instance
-   and one seeded `cashier`/`owner`/`manager` account; xUnit's default parallel
-   test-class execution causes intermittent unrelated failures (confirmed
-   pre-existing, not a Day 10-13 regression). Doesn't affect production behavior —
-   it's a CI/dev-workflow risk, not a shipped-code risk — but will bite whoever sets
-   up CI next if not fixed first. Workaround documented in `implementation-notes.md`.
+7. ~~**Test-suite isolation.**~~ Resolved — each test class now runs against its own
+   disposable Testcontainers Postgres instance instead of the shared dev database, so
+   the cross-class parallel-execution collisions no longer occur and `dotnet test`
+   no longer leaves artifact rows in `restaurant_db`. See `implementation-notes.md`.
 
 ## 4. Operational Prerequisites (Non-Code)
 
