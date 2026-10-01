@@ -419,6 +419,6 @@ stays deferred rather than built speculatively ahead of need.
 - Login is username-only, breaks with a 2nd Tenant (see `implementation-notes.md`,
   Identity & Auth) — not a blocker for a single-outlet launch, but must be fixed
   before onboarding a second outlet.
-- Test-suite isolation issue (shared dev Postgres across parallel test classes) —
-  a CI/dev-workflow risk, not a production risk, but should be fixed before setting
-  up CI. See `implementation-notes.md`'s Fast-follow section.
+- ~~Test-suite isolation issue (shared dev Postgres across parallel test classes)~~ —
+  resolved: each test class now gets its own Testcontainers Postgres instance. See
+  `implementation-notes.md`'s Fast-follow section.
