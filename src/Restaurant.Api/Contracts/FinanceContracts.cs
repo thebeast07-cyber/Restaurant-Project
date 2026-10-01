@@ -49,3 +49,46 @@ public record ProductMarginItem(
     bool CogsIsEstimated);
 
 public record ProductMarginResponse(DateOnly From, DateOnly To, List<ProductMarginItem> Items);
+
+public record CashFlowSourceLine(string Source, decimal CashIn, decimal CashOut);
+
+public record CashFlowResponse(
+    DateOnly From,
+    DateOnly To,
+    decimal OpeningCash,
+    decimal CashIn,
+    decimal CashOut,
+    decimal NetCashFlow,
+    decimal ClosingCash,
+    List<CashFlowSourceLine> Sources);
+
+public record ApAgingItem(
+    string Type,
+    string Name,
+    Guid ReferenceId,
+    DateOnly IncurredDate,
+    decimal OutstandingAmount,
+    int DaysOutstanding,
+    string Bucket);
+
+public record ApAgingResponse(
+    DateOnly AsOf,
+    decimal TotalOutstanding,
+    decimal Bucket0To30,
+    decimal Bucket31To60,
+    decimal Bucket61To90,
+    decimal BucketOver90,
+    List<ApAgingItem> Items);
+
+public record BalanceSheetLine(string Code, string Name, decimal Balance);
+
+public record BalanceSheetResponse(
+    DateOnly AsOf,
+    List<BalanceSheetLine> Assets,
+    decimal TotalAssets,
+    List<BalanceSheetLine> Liabilities,
+    decimal TotalLiabilities,
+    decimal RetainedEarnings,
+    decimal TotalEquity,
+    decimal TotalLiabilitiesAndEquity,
+    bool IsBalanced);

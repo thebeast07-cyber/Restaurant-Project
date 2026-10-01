@@ -7,7 +7,18 @@ import {
   type ExpenseCategory,
   type OperatingExpense,
 } from "../api/expenses";
-import { getProductMargin, getProfitLoss, type ProductMarginReport, type ProfitLossReport } from "../api/finance";
+import {
+  getApAging,
+  getBalanceSheet,
+  getCashFlow,
+  getProductMargin,
+  getProfitLoss,
+  type ApAgingReport,
+  type BalanceSheetReport,
+  type CashFlowReport,
+  type ProductMarginReport,
+  type ProfitLossReport,
+} from "../api/finance";
 import { useAuth } from "../context/AuthContext";
 import { ApiError } from "../api/client";
 import "./PurchasingShared.css";
@@ -71,6 +82,19 @@ export function FinancePage() {
   const [marginTo, setMarginTo] = useState(todayIso());
   const [productMargin, setProductMargin] = useState<ProductMarginReport | null>(null);
 
+  // Arus Kas
+  const [cfFrom, setCfFrom] = useState(firstOfMonthIso());
+  const [cfTo, setCfTo] = useState(todayIso());
+  const [cashFlow, setCashFlow] = useState<CashFlowReport | null>(null);
+
+  // Hutang Jatuh Tempo (AP Aging)
+  const [apAsOf, setApAsOf] = useState(todayIso());
+  const [apAging, setApAging] = useState<ApAgingReport | null>(null);
+
+  // Neraca
+  const [bsAsOf, setBsAsOf] = useState(todayIso());
+  const [balanceSheet, setBalanceSheet] = useState<BalanceSheetReport | null>(null);
+
   function handleError(err: unknown) {
     setError(err instanceof ApiError ? err.message : "Tidak bisa terhubung ke server.");
   }
@@ -93,6 +117,21 @@ export function FinancePage() {
     if (!canView) return;
     getProductMargin(marginFrom, marginTo).then(setProductMargin).catch(handleError);
   }, [canView, marginFrom, marginTo]);
+
+  useEffect(() => {
+    if (!canView) return;
+    getCashFlow(cfFrom, cfTo).then(setCashFlow).catch(handleError);
+  }, [canView, cfFrom, cfTo]);
+
+  useEffect(() => {
+    if (!canView) return;
+    getApAging(apAsOf).then(setApAging).catch(handleError);
+  }, [canView, apAsOf]);
+
+  useEffect(() => {
+    if (!canView) return;
+    getBalanceSheet(bsAsOf).then(setBalanceSheet).catch(handleError);
+  }, [canView, bsAsOf]);
 
   async function handleExpenseSubmit(event: FormEvent) {
     event.preventDefault();
@@ -353,6 +392,193 @@ export function FinancePage() {
               )}
             </tbody>
           </table>
+        )}
+      </section>
+
+      {/* ---------- Arus Kas (Cash Flow) ---------- */}
+      <section className="reports-card">
+        <div className="reports-trend-header">
+          <h2>Arus Kas</h2>
+          <div className="reports-trend-controls">
+            <input type="date" value={cfFrom} onChange={(event) => setCfFrom(event.target.value)} />
+            <span>s/d</span>
+            <input type="date" value={cfTo} onChange={(event) => setCfTo(event.target.value)} />
+          </div>
+        </div>
+
+        {cashFlow && (
+          <>
+            <div className="reports-stat-grid">
+              <div className="reports-stat">
+                <span className="reports-stat-label">Saldo Awal</span>
+                <span className="reports-stat-value">{formatRupiah(cashFlow.openingCash)}</span>
+              </div>
+              <div className="reports-stat">
+                <span className="reports-stat-label">Kas Masuk</span>
+                <span className="reports-stat-value">{formatRupiah(cashFlow.cashIn)}</span>
+              </div>
+              <div className="reports-stat">
+                <span className="reports-stat-label">Kas Keluar</span>
+                <span className="reports-stat-value">{formatRupiah(cashFlow.cashOut)}</span>
+              </div>
+              <div className="reports-stat reports-stat--total">
+                <span className="reports-stat-label">Saldo Akhir</span>
+                <span className="reports-stat-value">{formatRupiah(cashFlow.closingCash)}</span>
+              </div>
+            </div>
+
+            <table className="purchasing-table">
+              <thead>
+                <tr>
+                  <th>Sumber</th>
+                  <th>Kas Masuk</th>
+                  <th>Kas Keluar</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cashFlow.sources.length === 0 ? (
+                  <tr>
+                    <td colSpan={3}>Tidak ada transaksi kas di rentang ini.</td>
+                  </tr>
+                ) : (
+                  cashFlow.sources.map((source) => (
+                    <tr key={source.source}>
+                      <td>{source.source}</td>
+                      <td>{source.cashIn > 0 ? formatRupiah(source.cashIn) : "—"}</td>
+                      <td>{source.cashOut > 0 ? formatRupiah(source.cashOut) : "—"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </>
+        )}
+      </section>
+
+      {/* ---------- Hutang Jatuh Tempo (AP Aging) ---------- */}
+      <section className="reports-card">
+        <div className="reports-trend-header">
+          <h2>Hutang Jatuh Tempo</h2>
+          <div className="reports-trend-controls">
+            <span>per</span>
+            <input type="date" value={apAsOf} onChange={(event) => setApAsOf(event.target.value)} />
+          </div>
+        </div>
+
+        {apAging && (
+          <>
+            <div className="reports-stat-grid">
+              <div className="reports-stat">
+                <span className="reports-stat-label">0–30 hari</span>
+                <span className="reports-stat-value">{formatRupiah(apAging.bucket0To30)}</span>
+              </div>
+              <div className="reports-stat">
+                <span className="reports-stat-label">31–60 hari</span>
+                <span className="reports-stat-value">{formatRupiah(apAging.bucket31To60)}</span>
+              </div>
+              <div className="reports-stat">
+                <span className="reports-stat-label">61–90 hari</span>
+                <span className="reports-stat-value">{formatRupiah(apAging.bucket61To90)}</span>
+              </div>
+              <div className="reports-stat reports-stat--total">
+                <span className="reports-stat-label">&gt;90 hari</span>
+                <span className="reports-stat-value">{formatRupiah(apAging.bucketOver90)}</span>
+              </div>
+            </div>
+
+            <table className="purchasing-table">
+              <thead>
+                <tr>
+                  <th>Jenis</th>
+                  <th>Nama</th>
+                  <th>Tanggal</th>
+                  <th>Umur</th>
+                  <th>Sisa Hutang</th>
+                </tr>
+              </thead>
+              <tbody>
+                {apAging.items.length === 0 ? (
+                  <tr>
+                    <td colSpan={5}>Tidak ada hutang terbuka.</td>
+                  </tr>
+                ) : (
+                  apAging.items.map((item) => (
+                    <tr key={item.referenceId}>
+                      <td>{item.type}</td>
+                      <td>{item.name}</td>
+                      <td>{item.incurredDate}</td>
+                      <td className={item.daysOutstanding > 90 ? "reports-row--warn" : undefined}>
+                        {item.daysOutstanding} hari
+                      </td>
+                      <td>{formatRupiah(item.outstandingAmount)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </>
+        )}
+      </section>
+
+      {/* ---------- Neraca (Balance Sheet) ---------- */}
+      <section className="reports-card">
+        <div className="reports-trend-header">
+          <h2>Neraca</h2>
+          <div className="reports-trend-controls">
+            <span>per</span>
+            <input type="date" value={bsAsOf} onChange={(event) => setBsAsOf(event.target.value)} />
+          </div>
+        </div>
+
+        {balanceSheet && (
+          <div className="reports-stat-grid">
+            <div className="reports-stat">
+              <span className="reports-stat-label">Aset</span>
+              <span className="reports-stat-value"></span>
+            </div>
+            {balanceSheet.assets.map((line) => (
+              <div className="reports-stat" key={line.code}>
+                <span className="reports-stat-label">{line.name}</span>
+                <span className="reports-stat-value">{formatRupiah(line.balance)}</span>
+              </div>
+            ))}
+            <div className="reports-stat reports-stat--total">
+              <span className="reports-stat-label">Total Aset</span>
+              <span className="reports-stat-value">{formatRupiah(balanceSheet.totalAssets)}</span>
+            </div>
+
+            <div className="reports-stat">
+              <span className="reports-stat-label">Kewajiban</span>
+              <span className="reports-stat-value"></span>
+            </div>
+            {balanceSheet.liabilities.map((line) => (
+              <div className="reports-stat" key={line.code}>
+                <span className="reports-stat-label">{line.name}</span>
+                <span className="reports-stat-value">{formatRupiah(line.balance)}</span>
+              </div>
+            ))}
+            <div className="reports-stat">
+              <span className="reports-stat-label">Total Kewajiban</span>
+              <span className="reports-stat-value">{formatRupiah(balanceSheet.totalLiabilities)}</span>
+            </div>
+
+            <div className="reports-stat">
+              <span className="reports-stat-label">Modal (Laba Ditahan)</span>
+              <span className="reports-stat-value">{formatRupiah(balanceSheet.retainedEarnings)}</span>
+            </div>
+
+            <div className="reports-stat reports-stat--total">
+              <span className="reports-stat-label">Total Kewajiban + Modal</span>
+              <span className="reports-stat-value">{formatRupiah(balanceSheet.totalLiabilitiesAndEquity)}</span>
+            </div>
+
+            {!balanceSheet.isBalanced && (
+              <p className="purchasing-error" role="alert">
+                Neraca tidak seimbang — Aset tidak sama dengan Kewajiban + Modal. Ini seharusnya tidak terjadi,
+                mohon laporkan.
+              </p>
+            )}
+          </div>
         )}
       </section>
 

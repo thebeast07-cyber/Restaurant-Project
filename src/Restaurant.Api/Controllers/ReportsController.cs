@@ -5,6 +5,7 @@ using Restaurant.Api.Contracts;
 using Restaurant.Domain.Finance;
 using Restaurant.Domain.Inventory;
 using Restaurant.Domain.Payment;
+using Restaurant.Domain.Purchasing;
 using Restaurant.Domain.Sales;
 using Restaurant.Infrastructure.Persistence;
 
@@ -419,5 +420,188 @@ public class ReportsController : ControllerBase
         items = items.OrderByDescending(i => i.GrossProfit).ToList();
 
         return Ok(new ProductMarginResponse(from, to, items));
+    }
+
+    /// <summary>
+    /// Direct-method cash flow — Cash(1000) journal lines only, broken down by what
+    /// each line's JournalEntry.ReferenceType was (Order = sales, PurchasePayment =
+    /// paying a supplier, OperatingExpensePayment = paying an operating expense,
+    /// which includes Gaji via Payslip — see Payslip.cs). OpeningCash sums every Cash
+    /// movement strictly before `from`, so ClosingCash reconciles to an actual
+    /// running cash position, not just this period's net.
+    /// </summary>
+    [HttpGet("cash-flow")]
+    public async Task<ActionResult<CashFlowResponse>> CashFlow([FromQuery] DateOnly from, [FromQuery] DateOnly to)
+    {
+        if (to < from)
+        {
+            return BadRequest(new { message = "'to' must not be before 'from'." });
+        }
+
+        var rangeStart = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var rangeEndExclusive = new DateTimeOffset(to.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero).AddDays(1);
+
+        var cashAccount = await _db.Accounts.SingleAsync(a => a.Code == "1000");
+
+        var openingCash = await _db.JournalLines
+            .Where(l => l.AccountId == cashAccount.Id)
+            .Join(_db.JournalEntries, l => l.JournalEntryId, j => j.Id, (l, j) => new { l.Debit, l.Credit, j.CreatedAt })
+            .Where(x => x.CreatedAt < rangeStart)
+            .SumAsync(x => x.Debit - x.Credit);
+
+        var movements = await _db.JournalLines
+            .Where(l => l.AccountId == cashAccount.Id)
+            .Join(_db.JournalEntries, l => l.JournalEntryId, j => j.Id, (l, j) => new { l.Debit, l.Credit, j.ReferenceType, j.CreatedAt })
+            .Where(x => x.CreatedAt >= rangeStart && x.CreatedAt < rangeEndExclusive)
+            .ToListAsync();
+
+        var sourceLabels = new Dictionary<string, string>
+        {
+            ["Order"] = "Penjualan",
+            ["PurchasePayment"] = "Pembayaran Supplier",
+            ["OperatingExpensePayment"] = "Pembayaran Biaya Operasional"
+        };
+
+        var sources = movements
+            .GroupBy(m => sourceLabels.GetValueOrDefault(m.ReferenceType, m.ReferenceType))
+            .Select(g => new CashFlowSourceLine(g.Key, g.Sum(x => x.Debit), g.Sum(x => x.Credit)))
+            .OrderByDescending(s => s.CashIn)
+            .ToList();
+
+        var cashIn = movements.Sum(x => x.Debit);
+        var cashOut = movements.Sum(x => x.Credit);
+        var netCashFlow = cashIn - cashOut;
+
+        return Ok(new CashFlowResponse(from, to, openingCash, cashIn, cashOut, netCashFlow, openingCash + netCashFlow, sources));
+    }
+
+    /// <summary>
+    /// Combines every source of Accounts Payable (2000) balance: unpaid/partial
+    /// Purchase (supplier debt) and unpaid/partial OperatingExpense (which includes
+    /// Payroll's net pay via Payslip.OperatingExpenseId — see Payslip.cs for why
+    /// Payroll reuses this entity instead of its own AP tracking). Both already carry
+    /// a running AmountPaid, so this report never touches JournalLines directly.
+    /// </summary>
+    [HttpGet("ap-aging")]
+    public async Task<ActionResult<ApAgingResponse>> ApAging([FromQuery] DateOnly? asOf)
+    {
+        var effectiveAsOf = asOf ?? DateOnly.FromDateTime(DateTime.UtcNow);
+
+        var unpaidPurchases = await _db.Purchases
+            .Where(p => p.PaymentStatus != PurchasePaymentStatus.Paid)
+            .ToListAsync();
+        var supplierIds = unpaidPurchases.Select(p => p.SupplierId).Distinct().ToList();
+        var supplierNames = await _db.Suppliers.Where(s => supplierIds.Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Name);
+
+        var unpaidExpenses = await _db.OperatingExpenses
+            .Where(e => e.PaymentStatus != ExpensePaymentStatus.Paid)
+            .ToListAsync();
+
+        static string Bucket(int days) => days switch
+        {
+            <= 30 => "0-30",
+            <= 60 => "31-60",
+            <= 90 => "61-90",
+            _ => "90+"
+        };
+
+        var items = new List<ApAgingItem>();
+
+        foreach (var purchase in unpaidPurchases)
+        {
+            var incurredDate = DateOnly.FromDateTime(purchase.CreatedAt.UtcDateTime);
+            var daysOutstanding = effectiveAsOf.DayNumber - incurredDate.DayNumber;
+            items.Add(new ApAgingItem(
+                "Supplier", supplierNames.GetValueOrDefault(purchase.SupplierId, "?"), purchase.Id,
+                incurredDate, purchase.TotalAmount - purchase.AmountPaid, daysOutstanding, Bucket(daysOutstanding)));
+        }
+
+        foreach (var expense in unpaidExpenses)
+        {
+            var daysOutstanding = effectiveAsOf.DayNumber - expense.IncurredAt.DayNumber;
+            items.Add(new ApAgingItem(
+                "Biaya", $"{expense.Category} — {expense.Description}", expense.Id,
+                expense.IncurredAt, expense.Amount - expense.AmountPaid, daysOutstanding, Bucket(daysOutstanding)));
+        }
+
+        items = items.OrderByDescending(i => i.DaysOutstanding).ToList();
+
+        return Ok(new ApAgingResponse(
+            effectiveAsOf,
+            items.Sum(i => i.OutstandingAmount),
+            items.Where(i => i.Bucket == "0-30").Sum(i => i.OutstandingAmount),
+            items.Where(i => i.Bucket == "31-60").Sum(i => i.OutstandingAmount),
+            items.Where(i => i.Bucket == "61-90").Sum(i => i.OutstandingAmount),
+            items.Where(i => i.Bucket == "90+").Sum(i => i.OutstandingAmount),
+            items));
+    }
+
+    /// <summary>
+    /// Classic T-structure: Assets = Liabilities + Equity. No standalone Equity
+    /// account exists in the Chart of Accounts (see DataSeeder) — Equity here is
+    /// entirely derived as Retained Earnings (cumulative Revenue − Expense up to
+    /// AsOf), the standard treatment for a business that has never recorded a
+    /// separate owner capital contribution. IsBalanced is a sanity check that should
+    /// always be true given double-entry (every JournalEntry is AssertBalanced()'d at
+    /// write time) — exposed so a future bug here is visible on the report itself,
+    /// not silently wrong.
+    /// </summary>
+    [HttpGet("balance-sheet")]
+    public async Task<ActionResult<BalanceSheetResponse>> BalanceSheet([FromQuery] DateOnly? asOf)
+    {
+        var effectiveAsOf = asOf ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var asOfExclusive = new DateTimeOffset(effectiveAsOf.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero).AddDays(1);
+
+        var accounts = await _db.Accounts.ToListAsync();
+        var balances = await _db.JournalLines
+            .Join(_db.JournalEntries, l => l.JournalEntryId, j => j.Id, (l, j) => new { l.AccountId, l.Debit, l.Credit, j.CreatedAt })
+            .Where(x => x.CreatedAt < asOfExclusive)
+            .GroupBy(x => x.AccountId)
+            .Select(g => new { AccountId = g.Key, Debit = g.Sum(x => x.Debit), Credit = g.Sum(x => x.Credit) })
+            .ToListAsync();
+
+        var balanceByAccount = balances.ToDictionary(b => b.AccountId, b => b);
+
+        var assets = new List<BalanceSheetLine>();
+        var liabilities = new List<BalanceSheetLine>();
+        decimal retainedEarningsAccum = 0, expenseTotal = 0;
+
+        foreach (var account in accounts.OrderBy(a => a.Code))
+        {
+            var movement = balanceByAccount.GetValueOrDefault(account.Id);
+            var debit = movement?.Debit ?? 0;
+            var credit = movement?.Credit ?? 0;
+
+            switch (account.Type)
+            {
+                case AccountType.Asset:
+                    assets.Add(new BalanceSheetLine(account.Code, account.Name, debit - credit));
+                    break;
+                case AccountType.Liability:
+                    liabilities.Add(new BalanceSheetLine(account.Code, account.Name, credit - debit));
+                    break;
+                case AccountType.Revenue:
+                case AccountType.Equity:
+                    // No standalone Equity account is seeded today — if one is ever added
+                    // directly (e.g. an owner capital contribution), fold it in here
+                    // alongside the derived P&L figure rather than as a separate line.
+                    retainedEarningsAccum += credit - debit;
+                    break;
+                case AccountType.Expense:
+                    expenseTotal += debit - credit;
+                    break;
+            }
+        }
+
+        var totalAssets = assets.Sum(a => a.Balance);
+        var totalLiabilities = liabilities.Sum(l => l.Balance);
+        var retainedEarnings = retainedEarningsAccum - expenseTotal;
+        var totalEquity = retainedEarnings;
+        var totalLiabilitiesAndEquity = totalLiabilities + totalEquity;
+
+        return Ok(new BalanceSheetResponse(
+            effectiveAsOf, assets, totalAssets, liabilities, totalLiabilities,
+            retainedEarnings, totalEquity, totalLiabilitiesAndEquity,
+            Math.Abs(totalAssets - totalLiabilitiesAndEquity) < 0.01m));
     }
 }
