@@ -12,3 +12,5 @@ obj/
 ## OS
 .DS_Store
 .claude/worktrees/
+src/Restaurant.Api/wwwroot/uploads/products/*
+!src/Restaurant.Api/wwwroot/uploads/products/.gitkeep

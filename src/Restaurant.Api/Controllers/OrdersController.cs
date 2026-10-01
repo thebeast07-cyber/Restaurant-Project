@@ -145,10 +145,36 @@ public class OrdersController : ControllerBase
             return BadRequest(new { message = $"Cannot add items to an order in status {order.Status}." });
         }
 
-        var product = await _db.Products.SingleOrDefaultAsync(p => p.Id == request.ProductId && p.IsActive);
+        var product = await _db.Products.Include(p => p.Variants)
+            .SingleOrDefaultAsync(p => p.Id == request.ProductId && p.IsActive);
         if (product is null)
         {
             return BadRequest(new { message = "ProductId not found or inactive." });
+        }
+
+        var activeVariants = product.Variants.Where(v => v.IsActive).ToList();
+        decimal unitPrice;
+        Guid? variantId = null;
+
+        if (activeVariants.Count > 0)
+        {
+            var variant = activeVariants.SingleOrDefault(v => v.Id == request.ProductVariantId);
+            if (variant is null)
+            {
+                return BadRequest(new { message = "ProductVariantId is required and must be an active variant of this product." });
+            }
+
+            unitPrice = variant.Price;
+            variantId = variant.Id;
+        }
+        else
+        {
+            if (request.ProductVariantId is not null)
+            {
+                return BadRequest(new { message = "This product has no variants." });
+            }
+
+            unitPrice = product.Price;
         }
 
         var item = new OrderItem
@@ -156,9 +182,10 @@ public class OrdersController : ControllerBase
             TenantId = _tenant.TenantId!.Value,
             OrderId = order.Id,
             ProductId = product.Id,
+            ProductVariantId = variantId,
             Quantity = request.Quantity,
-            UnitPrice = product.Price,
-            Subtotal = product.Price * request.Quantity,
+            UnitPrice = unitPrice,
+            Subtotal = unitPrice * request.Quantity,
             Station = product.Station,
             Notes = request.Notes
         };
@@ -330,19 +357,28 @@ public class OrdersController : ControllerBase
         }
 
         // --- 1. Compute Ingredient requirements from Recipe, aggregated across items ---
+        // Grouped by (ProductId, ProductVariantId), not ProductId alone — a Variant can
+        // carry its own Recipe distinct from its siblings (e.g. "Jumbo" using more
+        // rice), so two lines for the same Product but different Variants must resolve
+        // against different RecipeItem sets. A line with no Variant (ProductVariantId
+        // null) matches RecipeItems with ProductVariantId null — the Product's own
+        // recipe — same as before Variants existed.
         var productIds = order.Items.Select(i => i.ProductId).Distinct().ToList();
         var recipeItems = await _db.RecipeItems.Where(r => productIds.Contains(r.ProductId)).ToListAsync();
-        var quantityByProduct = order.Items
-            .GroupBy(i => i.ProductId)
+        var quantityByLine = order.Items
+            .GroupBy(i => (i.ProductId, i.ProductVariantId))
             .ToDictionary(g => g.Key, g => g.Sum(i => i.Quantity));
 
         var requiredByIngredient = new Dictionary<Guid, decimal>();
-        foreach (var recipeItem in recipeItems)
+        foreach (var (line, orderedQuantity) in quantityByLine)
         {
-            var orderedQuantity = quantityByProduct[recipeItem.ProductId];
-            var required = recipeItem.Quantity * orderedQuantity;
-            requiredByIngredient[recipeItem.IngredientId] =
-                requiredByIngredient.GetValueOrDefault(recipeItem.IngredientId) + required;
+            var applicableRecipe = recipeItems.Where(r => r.ProductId == line.ProductId && r.ProductVariantId == line.ProductVariantId);
+            foreach (var recipeItem in applicableRecipe)
+            {
+                var required = recipeItem.Quantity * orderedQuantity;
+                requiredByIngredient[recipeItem.IngredientId] =
+                    requiredByIngredient.GetValueOrDefault(recipeItem.IngredientId) + required;
+            }
         }
 
         // --- 2 & 3. Deduct stock atomically, validating sufficiency in the same step ---
@@ -474,7 +510,7 @@ public class OrdersController : ControllerBase
         foreach (var item in order.Items)
         {
             item.EstimatedCogs = recipeItems
-                .Where(r => r.ProductId == item.ProductId)
+                .Where(r => r.ProductId == item.ProductId && r.ProductVariantId == item.ProductVariantId)
                 .Sum(r => r.Quantity * item.Quantity * averageCosts.GetValueOrDefault(r.IngredientId, 0m));
         }
 
@@ -672,6 +708,10 @@ public class OrdersController : ControllerBase
         var productNames = await _db.Products
             .Where(p => productIds.Contains(p.Id))
             .ToDictionaryAsync(p => p.Id, p => p.Name);
+        var variantIds = order.Items.Where(i => i.ProductVariantId is not null).Select(i => i.ProductVariantId!.Value).Distinct().ToList();
+        var variantNames = await _db.ProductVariants
+            .Where(v => variantIds.Contains(v.Id))
+            .ToDictionaryAsync(v => v.Id, v => v.Name);
 
         return new OrderResponse(
             order.Id,
@@ -680,7 +720,9 @@ public class OrdersController : ControllerBase
             order.Status,
             order.TotalAmount,
             order.Items.Select(i => new OrderItemResponse(
-                i.Id, i.ProductId, productNames.GetValueOrDefault(i.ProductId, "?"), i.Quantity, i.UnitPrice, i.Subtotal, i.Station, i.Notes))
+                i.Id, i.ProductId, productNames.GetValueOrDefault(i.ProductId, "?"),
+                i.ProductVariantId, i.ProductVariantId is null ? null : variantNames.GetValueOrDefault(i.ProductVariantId.Value, "?"),
+                i.Quantity, i.UnitPrice, i.Subtotal, i.Station, i.Notes))
                 .ToList());
     }
 }

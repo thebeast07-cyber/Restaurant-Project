@@ -116,6 +116,36 @@
   color: var(--text);
 }
 
+.order-product-image {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.order-variant-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.order-variant-option {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.order-variant-option:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .order-cart {
   border: 1px solid var(--border);
   border-radius: 8px;

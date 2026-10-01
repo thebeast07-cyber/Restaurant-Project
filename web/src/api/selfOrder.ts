@@ -1,11 +1,19 @@
 import { apiFetch } from "./client";
 import type { Order } from "./orders";
 
+export interface SelfOrderMenuVariant {
+  id: string;
+  name: string;
+  price: number;
+}
+
 export interface SelfOrderMenuItem {
   productId: string;
   name: string;
   categoryName: string;
   price: number;
+  imageUrl: string | null;
+  variants: SelfOrderMenuVariant[];
 }
 
 export interface SelfOrderTableState {
@@ -41,10 +49,15 @@ export function startSelfOrder(tableId: string, name: string, phone: string): Pr
   });
 }
 
-export function addSelfOrderItem(orderId: string, productId: string, quantity: number): Promise<Order> {
+export function addSelfOrderItem(
+  orderId: string,
+  productId: string,
+  quantity: number,
+  productVariantId?: string,
+): Promise<Order> {
   return apiFetch<Order>(`/api/self-order/orders/${orderId}/items`, {
     method: "POST",
-    body: JSON.stringify({ productId, quantity }),
+    body: JSON.stringify({ productId, quantity, productVariantId: productVariantId ?? null }),
   });
 }
 

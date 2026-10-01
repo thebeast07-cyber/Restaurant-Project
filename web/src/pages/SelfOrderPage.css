@@ -92,6 +92,51 @@
   white-space: nowrap;
 }
 
+.self-order-menu-item-image {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.self-order-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 40%);
+  padding: 24px;
+  z-index: 10;
+}
+
+.self-order-variant-card {
+  width: 100%;
+  max-width: 320px;
+  padding: 20px;
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  color: var(--text-h, #111);
+}
+
+.self-order-variant-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.self-order-variant-option {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #eee);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+}
+
 .self-order-cart {
   position: fixed;
   bottom: 0;

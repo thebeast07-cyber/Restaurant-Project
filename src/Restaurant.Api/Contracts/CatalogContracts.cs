@@ -13,12 +13,20 @@ public record UpdateMinimumStockRequest(decimal MinimumStock);
 public record RecipeItemRequest(Guid IngredientId, decimal Quantity, string Unit);
 public record RecipeItemResponse(Guid Id, Guid IngredientId, string IngredientName, decimal Quantity, string Unit);
 
+/// <summary>Id is null for a brand-new Variant being added; set (and preserved) for
+/// an existing one being edited — see ProductsController.Update for why that
+/// distinction matters (preserving OrderItem's FK to past orders).</summary>
+public record ProductVariantRequest(Guid? Id, string Name, decimal Price, List<RecipeItemRequest> RecipeItems);
+
+public record ProductVariantResponse(Guid Id, string Name, decimal Price, List<RecipeItemResponse> RecipeItems);
+
 public record CreateProductRequest(
     string Name,
     Guid CategoryId,
     decimal Price,
     Station Station,
-    List<RecipeItemRequest> RecipeItems);
+    List<RecipeItemRequest> RecipeItems,
+    List<ProductVariantRequest>? Variants = null);
 
 public record ProductResponse(
     Guid Id,
@@ -27,7 +35,9 @@ public record ProductResponse(
     decimal Price,
     Station Station,
     bool IsActive,
-    List<RecipeItemResponse> RecipeItems);
+    string? ImageUrl,
+    List<RecipeItemResponse> RecipeItems,
+    List<ProductVariantResponse> Variants);
 
 public record UpdateProductRequest(
     string Name,
@@ -35,4 +45,5 @@ public record UpdateProductRequest(
     decimal Price,
     Station Station,
     bool IsActive,
-    List<RecipeItemRequest> RecipeItems);
+    List<RecipeItemRequest> RecipeItems,
+    List<ProductVariantRequest>? Variants = null);

@@ -2,7 +2,9 @@ using Restaurant.Domain.Sales;
 
 namespace Restaurant.Api.Contracts;
 
-public record SelfOrderMenuItem(Guid ProductId, string Name, string CategoryName, decimal Price);
+public record SelfOrderMenuVariant(Guid Id, string Name, decimal Price);
+
+public record SelfOrderMenuItem(Guid ProductId, string Name, string CategoryName, decimal Price, string? ImageUrl, List<SelfOrderMenuVariant> Variants);
 
 public record SelfOrderTableStateResponse(
     string TableNumber, bool IsOpen, OrderResponse? ActiveOrder, List<SelfOrderMenuItem> Menu);

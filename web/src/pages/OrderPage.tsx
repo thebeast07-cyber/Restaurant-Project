@@ -18,6 +18,7 @@ import { useAuth } from "../context/AuthContext";
 import { ApiError } from "../api/client";
 import "./OrderPage.css";
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
 const CAN_VOID_ROLES = ["Owner", "Manager"];
 
 export function OrderPage() {
@@ -44,6 +45,7 @@ export function OrderPage() {
   const [showCashModal, setShowCashModal] = useState(false);
   const [cashTendered, setCashTendered] = useState("");
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [variantPickerProduct, setVariantPickerProduct] = useState<Product | null>(null);
 
   useEffect(() => {
     if (!paymentConfirmation || !orderId) return;
@@ -64,15 +66,24 @@ export function OrderPage() {
       .catch((err) => setError(err instanceof ApiError ? err.message : "Tidak bisa terhubung ke server."));
   }, [orderId]);
 
-  async function handleAddItem(productId: string) {
+  function handleProductClick(product: Product) {
+    if (product.variants.length > 0) {
+      setVariantPickerProduct(product);
+      return;
+    }
+    handleAddItem(product.id);
+  }
+
+  async function handleAddItem(productId: string, productVariantId?: string) {
     if (!orderId) {
       return;
     }
     setError(null);
     setIsBusy(true);
     try {
-      const updated = await addOrderItem(orderId, productId, 1);
+      const updated = await addOrderItem(orderId, productId, 1, productVariantId);
       setOrder(updated);
+      setVariantPickerProduct(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Tidak bisa terhubung ke server.");
     } finally {
@@ -256,10 +267,15 @@ export function OrderPage() {
                   type="button"
                   className="order-product"
                   disabled={isBusy}
-                  onClick={() => handleAddItem(product.id)}
+                  onClick={() => handleProductClick(product)}
                 >
+                  {product.imageUrl && (
+                    <img src={`${API_BASE_URL}${product.imageUrl}`} alt="" className="order-product-image" />
+                  )}
                   <span>{product.name}</span>
-                  <span className="order-product-price">{formatRupiah(product.price)}</span>
+                  <span className="order-product-price">
+                    {product.variants.length > 0 ? "Pilih varian" : formatRupiah(product.price)}
+                  </span>
                 </button>
               ))}
             </div>
@@ -274,6 +290,7 @@ export function OrderPage() {
                   <div className="order-cart-item-row">
                     <span>
                       {item.quantity}× {item.productName}
+                      {item.productVariantName && ` (${item.productVariantName})`}
                     </span>
                     <span>{formatRupiah(item.subtotal)}</span>
                     <button
@@ -334,6 +351,33 @@ export function OrderPage() {
               </button>
             </div>
           </aside>
+        </div>
+      )}
+
+      {variantPickerProduct && (
+        <div className="order-void-overlay">
+          <div className="order-void-card">
+            <h2>Pilih Varian — {variantPickerProduct.name}</h2>
+            <div className="order-variant-options">
+              {variantPickerProduct.variants.map((variant) => (
+                <button
+                  key={variant.id}
+                  type="button"
+                  className="order-variant-option"
+                  disabled={isBusy}
+                  onClick={() => handleAddItem(variantPickerProduct.id, variant.id)}
+                >
+                  <span>{variant.name}</span>
+                  <span>{formatRupiah(variant.price)}</span>
+                </button>
+              ))}
+            </div>
+            <div className="order-void-actions">
+              <button type="button" className="order-void-cancel" onClick={() => setVariantPickerProduct(null)}>
+                Batal
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -58,10 +58,19 @@ public class SelfOrderController : ControllerBase
             }
         }
 
-        var menu = await _db.Products
+        var menuProducts = await _db.Products
             .Where(p => p.TenantId == table.TenantId && p.BranchId == table.BranchId && p.IsActive)
-            .Join(_db.Categories, p => p.CategoryId, c => c.Id, (p, c) => new SelfOrderMenuItem(p.Id, p.Name, c.Name, p.Price))
+            .Include(p => p.Variants)
             .ToListAsync();
+        var categoryNames = await _db.Categories
+            .Where(c => menuProducts.Select(p => p.CategoryId).Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+
+        var menu = menuProducts
+            .Select(p => new SelfOrderMenuItem(
+                p.Id, p.Name, categoryNames.GetValueOrDefault(p.CategoryId, "?"), p.Price, p.ImageUrl,
+                p.Variants.Where(v => v.IsActive).Select(v => new SelfOrderMenuVariant(v.Id, v.Name, v.Price)).ToList()))
+            .ToList();
 
         return Ok(new SelfOrderTableStateResponse(table.Number, isOpen, activeOrder, menu));
     }
@@ -196,11 +205,36 @@ public class SelfOrderController : ControllerBase
             return BadRequest(new { message = $"Cannot add items to an order in status {order.Status}." });
         }
 
-        var product = await _db.Products.SingleOrDefaultAsync(p =>
+        var product = await _db.Products.Include(p => p.Variants).SingleOrDefaultAsync(p =>
             p.Id == request.ProductId && p.TenantId == order.TenantId && p.IsActive);
         if (product is null)
         {
             return BadRequest(new { message = "ProductId not found or inactive." });
+        }
+
+        var activeVariants = product.Variants.Where(v => v.IsActive).ToList();
+        decimal unitPrice;
+        Guid? variantId = null;
+
+        if (activeVariants.Count > 0)
+        {
+            var variant = activeVariants.SingleOrDefault(v => v.Id == request.ProductVariantId);
+            if (variant is null)
+            {
+                return BadRequest(new { message = "ProductVariantId is required and must be an active variant of this product." });
+            }
+
+            unitPrice = variant.Price;
+            variantId = variant.Id;
+        }
+        else
+        {
+            if (request.ProductVariantId is not null)
+            {
+                return BadRequest(new { message = "This product has no variants." });
+            }
+
+            unitPrice = product.Price;
         }
 
         _db.OrderItems.Add(new OrderItem
@@ -208,14 +242,15 @@ public class SelfOrderController : ControllerBase
             TenantId = order.TenantId,
             OrderId = order.Id,
             ProductId = product.Id,
+            ProductVariantId = variantId,
             Quantity = request.Quantity,
-            UnitPrice = product.Price,
-            Subtotal = product.Price * request.Quantity,
+            UnitPrice = unitPrice,
+            Subtotal = unitPrice * request.Quantity,
             Station = product.Station
         });
 
         var newTotal = await _db.OrderItems.Where(i => i.OrderId == order.Id).SumAsync(i => i.Subtotal)
-            + product.Price * request.Quantity;
+            + unitPrice * request.Quantity;
         order.TotalAmount = newTotal;
 
         if (order.Status == OrderStatus.Draft)
@@ -277,6 +312,8 @@ public class SelfOrderController : ControllerBase
 
         var productIds = order.Items.Select(i => i.ProductId).Distinct().ToList();
         var productNames = await _db.Products.Where(p => productIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id, p => p.Name);
+        var variantIds = order.Items.Where(i => i.ProductVariantId is not null).Select(i => i.ProductVariantId!.Value).Distinct().ToList();
+        var variantNames = await _db.ProductVariants.Where(v => variantIds.Contains(v.Id)).ToDictionaryAsync(v => v.Id, v => v.Name);
 
         return new OrderResponse(
             order.Id,
@@ -285,7 +322,9 @@ public class SelfOrderController : ControllerBase
             order.Status,
             order.TotalAmount,
             order.Items.Select(i => new OrderItemResponse(
-                i.Id, i.ProductId, productNames.GetValueOrDefault(i.ProductId, "?"), i.Quantity, i.UnitPrice, i.Subtotal, i.Station, i.Notes))
+                i.Id, i.ProductId, productNames.GetValueOrDefault(i.ProductId, "?"),
+                i.ProductVariantId, i.ProductVariantId is null ? null : variantNames.GetValueOrDefault(i.ProductVariantId.Value, "?"),
+                i.Quantity, i.UnitPrice, i.Subtotal, i.Station, i.Notes))
                 .ToList());
     }
 }

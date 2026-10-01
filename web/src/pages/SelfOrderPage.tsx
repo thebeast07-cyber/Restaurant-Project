@@ -12,6 +12,8 @@ import type { Order } from "../api/orders";
 import { ApiError } from "../api/client";
 import "./SelfOrderPage.css";
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
+
 function formatRupiah(amount: number): string {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(
     amount,
@@ -32,6 +34,7 @@ export function SelfOrderPage() {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [variantPickerItem, setVariantPickerItem] = useState<SelfOrderMenuItem | null>(null);
 
   const pollRef = useRef<number | null>(null);
 
@@ -90,12 +93,21 @@ export function SelfOrderPage() {
     }
   }
 
-  async function handleAdd(item: SelfOrderMenuItem) {
+  function handleItemClick(item: SelfOrderMenuItem) {
+    if (item.variants.length > 0) {
+      setVariantPickerItem(item);
+      return;
+    }
+    handleAdd(item.productId);
+  }
+
+  async function handleAdd(productId: string, productVariantId?: string) {
     if (!order) return;
     setError(null);
     try {
-      const updated = await addSelfOrderItem(order.id, item.productId, 1);
+      const updated = await addSelfOrderItem(order.id, productId, 1, productVariantId);
       setOrder(updated);
+      setVariantPickerItem(null);
     } catch (err) {
       handleError(err);
     }
@@ -184,11 +196,16 @@ export function SelfOrderPage() {
           <h2>{categoryName}</h2>
           {items.map((item) => (
             <div key={item.productId} className="self-order-menu-item">
+              {item.imageUrl && (
+                <img src={`${API_BASE_URL}${item.imageUrl}`} alt="" className="self-order-menu-item-image" />
+              )}
               <div>
                 <div className="self-order-menu-item-name">{item.name}</div>
-                <div className="self-order-menu-item-price">{formatRupiah(item.price)}</div>
+                <div className="self-order-menu-item-price">
+                  {item.variants.length > 0 ? "Pilih varian" : formatRupiah(item.price)}
+                </div>
               </div>
-              <button type="button" onClick={() => handleAdd(item)}>
+              <button type="button" onClick={() => handleItemClick(item)}>
                 Tambah
               </button>
             </div>
@@ -205,7 +222,8 @@ export function SelfOrderPage() {
             <ul>
               {order.items.map((item) => (
                 <li key={item.id}>
-                  {item.quantity}x {item.productName} — {formatRupiah(item.subtotal)}
+                  {item.quantity}x {item.productName}
+                  {item.productVariantName && ` (${item.productVariantName})`} — {formatRupiah(item.subtotal)}
                 </li>
               ))}
             </ul>
@@ -214,6 +232,30 @@ export function SelfOrderPage() {
         )}
         <p className="self-order-hint">Sudah selesai pesan? Panggil staff untuk bayar di kasir.</p>
       </div>
+
+      {variantPickerItem && (
+        <div className="self-order-overlay">
+          <div className="self-order-variant-card">
+            <h2>Pilih Varian — {variantPickerItem.name}</h2>
+            <div className="self-order-variant-options">
+              {variantPickerItem.variants.map((variant) => (
+                <button
+                  key={variant.id}
+                  type="button"
+                  className="self-order-variant-option"
+                  onClick={() => handleAdd(variantPickerItem.productId, variant.id)}
+                >
+                  <span>{variant.name}</span>
+                  <span>{formatRupiah(variant.price)}</span>
+                </button>
+              ))}
+            </div>
+            <button type="button" onClick={() => setVariantPickerItem(null)}>
+              Batal
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

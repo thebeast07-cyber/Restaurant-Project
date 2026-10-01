@@ -1,4 +1,4 @@
-import { apiFetch } from "./client";
+import { apiFetch, apiUpload } from "./client";
 
 export type Station = "Kitchen" | "Bar";
 
@@ -10,6 +10,26 @@ export interface RecipeItem {
   unit: string;
 }
 
+export interface RecipeItemInput {
+  ingredientId: string;
+  quantity: number;
+  unit: string;
+}
+
+export interface ProductVariant {
+  id: string;
+  name: string;
+  price: number;
+  recipeItems: RecipeItem[];
+}
+
+export interface ProductVariantInput {
+  id?: string;
+  name: string;
+  price: number;
+  recipeItems: RecipeItemInput[];
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -17,7 +37,9 @@ export interface Product {
   price: number;
   station: Station;
   isActive: boolean;
+  imageUrl: string | null;
   recipeItems: RecipeItem[];
+  variants: ProductVariant[];
 }
 
 export function listProducts(includeInactive = false): Promise<Product[]> {
@@ -30,11 +52,12 @@ export function createProduct(
   categoryId: string,
   price: number,
   station: Station,
-  recipeItems: { ingredientId: string; quantity: number; unit: string }[],
+  recipeItems: RecipeItemInput[],
+  variants: ProductVariantInput[] = [],
 ): Promise<Product> {
   return apiFetch<Product>("/api/products", {
     method: "POST",
-    body: JSON.stringify({ name, categoryId, price, station, recipeItems }),
+    body: JSON.stringify({ name, categoryId, price, station, recipeItems, variants }),
   });
 }
 
@@ -45,10 +68,17 @@ export function updateProduct(
   price: number,
   station: Station,
   isActive: boolean,
-  recipeItems: { ingredientId: string; quantity: number; unit: string }[],
+  recipeItems: RecipeItemInput[],
+  variants: ProductVariantInput[] = [],
 ): Promise<Product> {
   return apiFetch<Product>(`/api/products/${id}`, {
     method: "PUT",
-    body: JSON.stringify({ name, categoryId, price, station, isActive, recipeItems }),
+    body: JSON.stringify({ name, categoryId, price, station, isActive, recipeItems, variants }),
   });
+}
+
+export function uploadProductImage(id: string, file: File): Promise<Product> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiUpload<Product>(`/api/products/${id}/image`, formData);
 }

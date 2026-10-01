@@ -398,22 +398,42 @@ public class ReportsController : ControllerBase
         var ingredientIds = recipeItems.Select(r => r.IngredientId).Distinct().ToList();
         var averageCosts = await _db.Ingredients.Where(i => ingredientIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id, i => i.AverageCost);
 
-        var items = new List<ProductMarginItem>();
-        foreach (var group in orderItems.GroupBy(oi => oi.ProductId))
-        {
-            var quantitySold = group.Sum(oi => oi.Quantity);
-            var revenue = group.Sum(oi => oi.Subtotal);
-            var cogsIsEstimated = group.Any(oi => oi.EstimatedCogs is null);
+        // Grouped at (ProductId, ProductVariantId) — same granularity the fallback
+        // COGS calc below needs, since RecipeItem can differ per Variant (see
+        // OrdersController.Checkout). Rolled up by ProductId immediately after for
+        // today's product-level response shape; a future per-variant breakdown is
+        // skipping that rollup, not a rewrite of this calculation.
+        var lineGroups = orderItems
+            .GroupBy(oi => (oi.ProductId, oi.ProductVariantId))
+            .Select(group =>
+            {
+                var cogs = group.Sum(oi => oi.EstimatedCogs ?? recipeItems
+                    .Where(r => r.ProductId == group.Key.ProductId && r.ProductVariantId == group.Key.ProductVariantId)
+                    .Sum(r => r.Quantity * oi.Quantity * averageCosts.GetValueOrDefault(r.IngredientId, 0m)));
 
-            var cogs = group.Sum(oi => oi.EstimatedCogs ?? recipeItems
-                .Where(r => r.ProductId == oi.ProductId)
-                .Sum(r => r.Quantity * oi.Quantity * averageCosts.GetValueOrDefault(r.IngredientId, 0m)));
+                return new
+                {
+                    group.Key.ProductId,
+                    QuantitySold = group.Sum(oi => oi.Quantity),
+                    Revenue = group.Sum(oi => oi.Subtotal),
+                    Cogs = cogs,
+                    CogsIsEstimated = group.Any(oi => oi.EstimatedCogs is null)
+                };
+            });
+
+        var items = new List<ProductMarginItem>();
+        foreach (var productGroup in lineGroups.GroupBy(l => l.ProductId))
+        {
+            var quantitySold = productGroup.Sum(l => l.QuantitySold);
+            var revenue = productGroup.Sum(l => l.Revenue);
+            var cogs = productGroup.Sum(l => l.Cogs);
+            var cogsIsEstimated = productGroup.Any(l => l.CogsIsEstimated);
 
             var grossProfit = revenue - cogs;
             var grossMarginPct = revenue != 0 ? grossProfit / revenue * 100 : 0;
 
             items.Add(new ProductMarginItem(
-                group.Key, productNames.GetValueOrDefault(group.Key, "?"), quantitySold,
+                productGroup.Key, productNames.GetValueOrDefault(productGroup.Key, "?"), quantitySold,
                 revenue, cogs, grossProfit, grossMarginPct, cogsIsEstimated));
         }
 

@@ -8,6 +8,8 @@ export interface OrderItem {
   id: string;
   productId: string;
   productName: string;
+  productVariantId: string | null;
+  productVariantName: string | null;
   quantity: number;
   unitPrice: number;
   subtotal: number;
@@ -52,11 +54,12 @@ export function addOrderItem(
   orderId: string,
   productId: string,
   quantity: number,
+  productVariantId?: string,
   notes?: string,
 ): Promise<Order> {
   return apiFetch<Order>(`/api/orders/${orderId}/items`, {
     method: "POST",
-    body: JSON.stringify({ productId, quantity, notes: notes || null }),
+    body: JSON.stringify({ productId, quantity, productVariantId: productVariantId ?? null, notes: notes || null }),
   });
 }
 

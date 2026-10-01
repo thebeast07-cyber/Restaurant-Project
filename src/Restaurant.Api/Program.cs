@@ -94,6 +94,11 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+// Serves uploaded product photos from wwwroot/uploads (see
+// ProductsController.UploadImage) — local disk is a placeholder storage backend
+// until production hosting/object storage is decided, see that method's doc comment.
+app.UseStaticFiles();
+
 app.UseCors(WebUiCorsPolicy);
 
 app.UseAuthentication();

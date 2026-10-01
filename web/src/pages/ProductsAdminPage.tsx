@@ -1,6 +1,14 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { createProduct, listProducts, updateProduct, type Product, type Station } from "../api/products";
+import {
+  createProduct,
+  listProducts,
+  updateProduct,
+  uploadProductImage,
+  type Product,
+  type ProductVariantInput,
+  type Station,
+} from "../api/products";
 import { listCategories, type Category } from "../api/categories";
 import { listIngredients, type Ingredient } from "../api/ingredients";
 import { IngredientSelect } from "../components/IngredientSelect";
@@ -8,12 +16,20 @@ import { useAuth } from "../context/AuthContext";
 import { ApiError } from "../api/client";
 import "./PurchasingShared.css";
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
 const CAN_MANAGE_ROLES = ["Owner", "Manager"];
 
 interface RecipeLine {
   ingredientId: string;
   quantity: string;
   unit: string;
+}
+
+interface VariantDraft {
+  id?: string;
+  name: string;
+  price: string;
+  recipeLines: RecipeLine[];
 }
 
 interface ProductDraft {
@@ -23,10 +39,11 @@ interface ProductDraft {
   station: Station;
   isActive: boolean;
   recipeLines: RecipeLine[];
+  variants: VariantDraft[];
 }
 
 function emptyDraft(): ProductDraft {
-  return { name: "", categoryId: "", price: "", station: "Kitchen", isActive: true, recipeLines: [] };
+  return { name: "", categoryId: "", price: "", station: "Kitchen", isActive: true, recipeLines: [], variants: [] };
 }
 
 function draftFromProduct(product: Product): ProductDraft {
@@ -41,7 +58,34 @@ function draftFromProduct(product: Product): ProductDraft {
       quantity: String(item.quantity),
       unit: item.unit,
     })),
+    variants: product.variants.map((variant) => ({
+      id: variant.id,
+      name: variant.name,
+      price: String(variant.price),
+      recipeLines: variant.recipeItems.map((item) => ({
+        ingredientId: item.ingredientId,
+        quantity: String(item.quantity),
+        unit: item.unit,
+      })),
+    })),
   };
+}
+
+function toRecipeItemInputs(lines: RecipeLine[]) {
+  return lines
+    .filter((line) => line.ingredientId && line.quantity)
+    .map((line) => ({ ingredientId: line.ingredientId, quantity: Number(line.quantity), unit: line.unit }));
+}
+
+function toVariantInputs(variants: VariantDraft[]): ProductVariantInput[] {
+  return variants
+    .filter((variant) => variant.name && variant.price)
+    .map((variant) => ({
+      id: variant.id,
+      name: variant.name,
+      price: Number(variant.price),
+      recipeItems: toRecipeItemInputs(variant.recipeLines),
+    }));
 }
 
 export function ProductsAdminPage() {
@@ -61,6 +105,7 @@ export function ProductsAdminPage() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [editDraft, setEditDraft] = useState<ProductDraft>(emptyDraft());
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   useEffect(() => {
     refresh();
@@ -75,23 +120,20 @@ export function ProductsAdminPage() {
   }
 
   function updateRecipeLine(
-    draft: ProductDraft,
-    setDraft: (d: ProductDraft) => void,
+    lines: RecipeLine[],
+    setLines: (lines: RecipeLine[]) => void,
     index: number,
     patch: Partial<RecipeLine>,
   ) {
-    setDraft({
-      ...draft,
-      recipeLines: draft.recipeLines.map((line, i) => (i === index ? { ...line, ...patch } : line)),
-    });
+    setLines(lines.map((line, i) => (i === index ? { ...line, ...patch } : line)));
   }
 
-  function addRecipeLine(draft: ProductDraft, setDraft: (d: ProductDraft) => void) {
-    setDraft({ ...draft, recipeLines: [...draft.recipeLines, { ingredientId: "", quantity: "", unit: "" }] });
+  function addRecipeLine(lines: RecipeLine[], setLines: (lines: RecipeLine[]) => void) {
+    setLines([...lines, { ingredientId: "", quantity: "", unit: "" }]);
   }
 
-  function removeRecipeLine(draft: ProductDraft, setDraft: (d: ProductDraft) => void, index: number) {
-    setDraft({ ...draft, recipeLines: draft.recipeLines.filter((_, i) => i !== index) });
+  function removeRecipeLine(lines: RecipeLine[], setLines: (lines: RecipeLine[]) => void, index: number) {
+    setLines(lines.filter((_, i) => i !== index));
   }
 
   async function handleCreate(event: FormEvent) {
@@ -99,10 +141,11 @@ export function ProductsAdminPage() {
     setError(null);
     setIsSubmitting(true);
     try {
-      const items = createDraft.recipeLines
-        .filter((line) => line.ingredientId && line.quantity)
-        .map((line) => ({ ingredientId: line.ingredientId, quantity: Number(line.quantity), unit: line.unit }));
-      await createProduct(createDraft.name, createDraft.categoryId, Number(createDraft.price), createDraft.station, items);
+      const items = toRecipeItemInputs(createDraft.recipeLines);
+      const variants = toVariantInputs(createDraft.variants);
+      await createProduct(
+        createDraft.name, createDraft.categoryId, Number(createDraft.price), createDraft.station, items, variants,
+      );
       setCreateDraft(emptyDraft());
       setShowCreate(false);
       refresh();
@@ -126,9 +169,8 @@ export function ProductsAdminPage() {
     setError(null);
     setIsSaving(true);
     try {
-      const items = editDraft.recipeLines
-        .filter((line) => line.ingredientId && line.quantity)
-        .map((line) => ({ ingredientId: line.ingredientId, quantity: Number(line.quantity), unit: line.unit }));
+      const items = toRecipeItemInputs(editDraft.recipeLines);
+      const variants = toVariantInputs(editDraft.variants);
       await updateProduct(
         editingProduct.id,
         editDraft.name,
@@ -137,6 +179,7 @@ export function ProductsAdminPage() {
         editDraft.station,
         editDraft.isActive,
         items,
+        variants,
       );
       setEditingProduct(null);
       refresh();
@@ -147,22 +190,61 @@ export function ProductsAdminPage() {
     }
   }
 
+  async function handleImageUpload(event: FormEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    if (!file || !editingProduct) {
+      return;
+    }
+    setError(null);
+    setIsUploadingImage(true);
+    try {
+      const updated = await uploadProductImage(editingProduct.id, file);
+      setEditingProduct(updated);
+      refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Tidak bisa terhubung ke server.");
+    } finally {
+      setIsUploadingImage(false);
+      event.currentTarget.value = "";
+    }
+  }
+
+  function addVariant(draft: ProductDraft, setDraft: (d: ProductDraft) => void) {
+    setDraft({ ...draft, variants: [...draft.variants, { name: "", price: "", recipeLines: [] }] });
+  }
+
+  function removeVariant(draft: ProductDraft, setDraft: (d: ProductDraft) => void, index: number) {
+    setDraft({ ...draft, variants: draft.variants.filter((_, i) => i !== index) });
+  }
+
+  function updateVariant(
+    draft: ProductDraft,
+    setDraft: (d: ProductDraft) => void,
+    index: number,
+    patch: Partial<VariantDraft>,
+  ) {
+    setDraft({
+      ...draft,
+      variants: draft.variants.map((variant, i) => (i === index ? { ...variant, ...patch } : variant)),
+    });
+  }
+
   function categoryName(categoryId: string): string {
     return categories.find((c) => c.id === categoryId)?.name ?? "—";
   }
 
-  function renderRecipeEditor(draft: ProductDraft, setDraft: (d: ProductDraft) => void) {
+  function renderRecipeEditor(lines: RecipeLine[], setLines: (lines: RecipeLine[]) => void) {
     return (
       <>
         <label>Resep</label>
         <div className="purchasing-line-items">
-          {draft.recipeLines.map((line, index) => (
+          {lines.map((line, index) => (
             <div className="purchasing-line-item" key={index}>
               <IngredientSelect
                 ingredients={ingredients}
                 value={line.ingredientId}
                 required
-                onChange={(ingredientId, unit) => updateRecipeLine(draft, setDraft, index, { ingredientId, unit })}
+                onChange={(ingredientId, unit) => updateRecipeLine(lines, setLines, index, { ingredientId, unit })}
                 onCreated={(ingredient) => setIngredients((prev) => [...prev, ingredient])}
               />
               <input
@@ -171,27 +253,75 @@ export function ProductsAdminPage() {
                 step="any"
                 placeholder="Jumlah"
                 value={line.quantity}
-                onChange={(event) => updateRecipeLine(draft, setDraft, index, { quantity: event.target.value })}
+                onChange={(event) => updateRecipeLine(lines, setLines, index, { quantity: event.target.value })}
                 required
               />
               <input
                 placeholder="Satuan"
                 value={line.unit}
-                onChange={(event) => updateRecipeLine(draft, setDraft, index, { unit: event.target.value })}
+                onChange={(event) => updateRecipeLine(lines, setLines, index, { unit: event.target.value })}
                 required
               />
               <button
                 type="button"
                 className="purchasing-line-item-remove"
-                onClick={() => removeRecipeLine(draft, setDraft, index)}
+                onClick={() => removeRecipeLine(lines, setLines, index)}
               >
                 Hapus
               </button>
             </div>
           ))}
         </div>
-        <button type="button" className="purchasing-add-line" onClick={() => addRecipeLine(draft, setDraft)}>
+        <button type="button" className="purchasing-add-line" onClick={() => addRecipeLine(lines, setLines)}>
           + Tambah Bahan
+        </button>
+      </>
+    );
+  }
+
+  function renderVariantEditor(draft: ProductDraft, setDraft: (d: ProductDraft) => void) {
+    return (
+      <>
+        <label>Varian</label>
+        {draft.variants.length === 0 && (
+          <p className="purchasing-modal-meta">
+            Belum ada varian — produk ini dijual langsung dengan satu harga di atas.
+          </p>
+        )}
+        {draft.variants.map((variant, index) => (
+          <div key={variant.id ?? `new-${index}`} className="purchasing-form" style={{ marginBottom: 12 }}>
+            <div className="purchasing-line-item">
+              <input
+                placeholder="Nama varian (mis. Jumbo)"
+                value={variant.name}
+                onChange={(event) => updateVariant(draft, setDraft, index, { name: event.target.value })}
+                required
+              />
+              <input
+                type="number"
+                min="0"
+                step="any"
+                placeholder="Harga"
+                value={variant.price}
+                onChange={(event) => updateVariant(draft, setDraft, index, { price: event.target.value })}
+                required
+              />
+              <button
+                type="button"
+                className="purchasing-line-item-remove"
+                onClick={() => removeVariant(draft, setDraft, index)}
+              >
+                Hapus Varian
+              </button>
+            </div>
+            {renderRecipeEditor(
+              variant.recipeLines,
+              (lines) => updateVariant(draft, setDraft, index, { recipeLines: lines }),
+            )}
+          </div>
+        ))}
+        <button type="button" className="purchasing-add-line" onClick={() => addVariant(draft, setDraft)}>
+          + Tambah Varian
         </button>
       </>
     );
@@ -250,7 +380,7 @@ export function ProductsAdminPage() {
             ))}
           </select>
 
-          <label htmlFor="createPrice">Harga</label>
+          <label htmlFor="createPrice">Harga {createDraft.variants.length > 0 && "(diabaikan — varian punya harga sendiri)"}</label>
           <input
             id="createPrice"
             type="number"
@@ -271,7 +401,10 @@ export function ProductsAdminPage() {
             <option value="Bar">Bar</option>
           </select>
 
-          {renderRecipeEditor(createDraft, setCreateDraft)}
+          {createDraft.variants.length === 0 &&
+            renderRecipeEditor(createDraft.recipeLines, (lines) => setCreateDraft({ ...createDraft, recipeLines: lines }))}
+
+          {renderVariantEditor(createDraft, setCreateDraft)}
 
           <div className="purchasing-modal-actions">
             <button
@@ -294,6 +427,7 @@ export function ProductsAdminPage() {
       <table className="purchasing-table">
         <thead>
           <tr>
+            <th></th>
             <th>Nama</th>
             <th>Kategori</th>
             <th>Harga</th>
@@ -305,9 +439,24 @@ export function ProductsAdminPage() {
         <tbody>
           {products.map((product) => (
             <tr key={product.id}>
+              <td>
+                {product.imageUrl ? (
+                  <img
+                    src={`${API_BASE_URL}${product.imageUrl}`}
+                    alt={product.name}
+                    style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }}
+                  />
+                ) : (
+                  <span style={{ opacity: 0.4 }}>—</span>
+                )}
+              </td>
               <td>{product.name}</td>
               <td>{categoryName(product.categoryId)}</td>
-              <td>{formatRupiah(product.price)}</td>
+              <td>
+                {product.variants.length > 0
+                  ? `${product.variants.length} varian`
+                  : formatRupiah(product.price)}
+              </td>
               <td>{product.station === "Kitchen" ? "Dapur" : "Bar"}</td>
               <td>
                 <span className={`purchasing-badge ${product.isActive ? "purchasing-badge--positive" : ""}`}>
@@ -356,7 +505,7 @@ export function ProductsAdminPage() {
               ))}
             </select>
 
-            <label htmlFor="editPrice">Harga</label>
+            <label htmlFor="editPrice">Harga {editDraft.variants.length > 0 && "(diabaikan — varian punya harga sendiri)"}</label>
             <input
               id="editPrice"
               type="number"
@@ -388,7 +537,20 @@ export function ProductsAdminPage() {
               Aktif (tampil di menu kasir)
             </label>
 
-            {renderRecipeEditor(editDraft, setEditDraft)}
+            <label htmlFor="editImage">Foto Produk</label>
+            {editingProduct.imageUrl && (
+              <img
+                src={`${API_BASE_URL}${editingProduct.imageUrl}`}
+                alt={editingProduct.name}
+                style={{ width: 96, height: 96, objectFit: "cover", borderRadius: 6, marginBottom: 8 }}
+              />
+            )}
+            <input id="editImage" type="file" accept="image/jpeg,image/png,image/webp" onChange={handleImageUpload} disabled={isUploadingImage} />
+
+            {editDraft.variants.length === 0 &&
+              renderRecipeEditor(editDraft.recipeLines, (lines) => setEditDraft({ ...editDraft, recipeLines: lines }))}
+
+            {renderVariantEditor(editDraft, setEditDraft)}
 
             <div className="purchasing-modal-actions">
               <button type="button" className="purchasing-modal-cancel" onClick={() => setEditingProduct(null)}>

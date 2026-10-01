@@ -26,11 +26,21 @@ public record ShiftCloseResponse(
 
 public record CreateOrderRequest(Guid? TableId);
 
-public record AddOrderItemRequest(Guid ProductId, int Quantity, string? Notes = null);
+public record AddOrderItemRequest(Guid ProductId, int Quantity, Guid? ProductVariantId = null, string? Notes = null);
 
 public record UpdateOrderItemNotesRequest(string? Notes);
 
-public record OrderItemResponse(Guid Id, Guid ProductId, string ProductName, int Quantity, decimal UnitPrice, decimal Subtotal, Station Station, string? Notes);
+public record OrderItemResponse(
+    Guid Id,
+    Guid ProductId,
+    string ProductName,
+    Guid? ProductVariantId,
+    string? ProductVariantName,
+    int Quantity,
+    decimal UnitPrice,
+    decimal Subtotal,
+    Station Station,
+    string? Notes);
 
 public record OrderResponse(
     Guid Id,

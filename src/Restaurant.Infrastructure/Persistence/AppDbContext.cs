@@ -31,6 +31,7 @@ public class AppDbContext : DbContext
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Ingredient> Ingredients => Set<Ingredient>();
     public DbSet<Product> Products => Set<Product>();
+    public DbSet<ProductVariant> ProductVariants => Set<ProductVariant>();
     public DbSet<RecipeItem> RecipeItems => Set<RecipeItem>();
     public DbSet<RestaurantTable> Tables => Set<RestaurantTable>();
     public DbSet<Shift> Shifts => Set<Shift>();
@@ -101,8 +102,17 @@ public class AppDbContext : DbContext
         {
             r.ToTable("recipe_items");
             r.HasIndex(x => x.ProductId);
+            r.HasIndex(x => x.ProductVariantId);
             r.HasOne<Ingredient>().WithMany().HasForeignKey(x => x.IngredientId).OnDelete(DeleteBehavior.Restrict);
             r.HasOne<Product>().WithMany(p => p.RecipeItems).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Cascade);
+            r.HasOne<ProductVariant>().WithMany(v => v.RecipeItems).HasForeignKey(x => x.ProductVariantId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ProductVariant>(v =>
+        {
+            v.ToTable("product_variants");
+            v.HasIndex(x => x.ProductId);
+            v.HasOne<Product>().WithMany(p => p.Variants).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<RestaurantTable>(t =>
@@ -145,6 +155,7 @@ public class AppDbContext : DbContext
             oi.HasIndex(x => x.OrderId);
             oi.HasOne<Order>().WithMany(o => o.Items).HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Cascade);
             oi.HasOne<Product>().WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+            oi.HasOne<ProductVariant>().WithMany().HasForeignKey(x => x.ProductVariantId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Stock>(s =>

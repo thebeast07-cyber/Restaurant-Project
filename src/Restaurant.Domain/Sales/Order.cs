@@ -50,6 +50,13 @@ public class OrderItem : Entity, ITenantScoped
     public required Guid TenantId { get; set; }
     public required Guid OrderId { get; set; }
     public required Guid ProductId { get; set; }
+
+    /// <summary>Which ProductVariant was ordered — null for a Product sold with no
+    /// variants (today's default). Required when Product.Variants is non-empty, see
+    /// OrdersController.AddItem. Drives which RecipeItem set Checkout resolves for
+    /// this line (RecipeItem.ProductVariantId must match), since a variant can have
+    /// its own recipe distinct from its sibling variants.</summary>
+    public Guid? ProductVariantId { get; set; }
     public required int Quantity { get; set; }
     public required decimal UnitPrice { get; set; }
     public required decimal Subtotal { get; set; }
