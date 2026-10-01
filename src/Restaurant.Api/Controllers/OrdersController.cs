@@ -264,7 +264,9 @@ public class OrdersController : ControllerBase
         // --- 1. Compute Ingredient requirements from Recipe, aggregated across items ---
         var productIds = order.Items.Select(i => i.ProductId).Distinct().ToList();
         var recipeItems = await _db.RecipeItems.Where(r => productIds.Contains(r.ProductId)).ToListAsync();
-        var quantityByProduct = order.Items.ToDictionary(i => i.ProductId, i => i.Quantity);
+        var quantityByProduct = order.Items
+            .GroupBy(i => i.ProductId)
+            .ToDictionary(g => g.Key, g => g.Sum(i => i.Quantity));
 
         var requiredByIngredient = new Dictionary<Guid, decimal>();
         foreach (var recipeItem in recipeItems)
